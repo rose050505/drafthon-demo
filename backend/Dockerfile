@@ -8,12 +8,9 @@ RUN sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew --no-daemon bootJa
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system v2v && useradd --system --gid v2v v2v
 COPY --from=build --chown=v2v:v2v /workspace/build/libs/*.jar /app/v2v-backend.jar
-COPY --chown=v2v:v2v market-risk/ /app/market-risk/
 ENV SPRING_PROFILES_ACTIVE=cloud
-ENV V2V_STARTUP_RISK_ENABLED=true
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60.0"
 EXPOSE 8080
 USER v2v
