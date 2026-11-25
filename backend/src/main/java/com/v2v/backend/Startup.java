@@ -3,6 +3,8 @@ package com.v2v.backend;
 import static com.v2v.backend.Api.*;
 import static org.springframework.http.HttpStatus.*;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -160,6 +162,7 @@ class Startup {
 }
 
 @RestController
+@Tag(name = "창업 계획·분석", description = "예비 창업자의 계획 작성, 공실·업종 분석과 상담.")
 @RequestMapping("/api/startup-plans")
 class StartupController {
     private final Startup startup;
@@ -167,23 +170,31 @@ class StartupController {
     StartupController(Startup startup) { this.startup = startup; }
 
     @PostMapping
+    @Operation(summary = "창업 계획 만들기",
+        description = "예비 창업자의 계획을 만듭니다. 창업 아이템은 선택이고, 위치를 아는 경우 등록된 건물 ID 또는 직접 입력한 주소를 넣습니다. 처음부터 검토할 때는 빈 JSON 객체를 보냅니다.")
     @ResponseStatus(CREATED)
     Map<String, Object> create(@AuthenticationPrincipal Actor actor, @Valid @RequestBody NewPlan input) {
         return startup.create(actor.require(Role.FOUNDER), input);
     }
 
     @GetMapping
+    @Operation(summary = "내 창업 계획 목록 조회",
+        description = "로그인한 예비 창업자의 창업 계획을 생성 시각 기준 최신순으로 조회합니다. `limit`과 `offset`으로 목록을 나눠 읽습니다.")
     List<Map<String, Object>> list(@AuthenticationPrincipal Actor actor, @RequestParam(defaultValue = "30") int limit,
         @RequestParam(defaultValue = "0") int offset) {
         return startup.list(actor.require(Role.FOUNDER), limit, offset);
     }
 
     @GetMapping("/{id}")
+    @Operation(summary = "창업 계획 상세 조회",
+        description = "창업 계획 ID로 내 아이템, 희망 위치와 확정한 위치·업종 정보를 확인합니다.")
     Map<String, Object> get(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return startup.get(actor.require(Role.FOUNDER), id);
     }
 
     @PostMapping("/{id}/analysis")
+    @Operation(summary = "창업 입지·업종 AI 분석 요청",
+        description = "예비 창업자의 아이템과 위치에 따라 위험 분석, 입지 추천 또는 업종 추천을 요청합니다. `vacancyId`를 보내면 선택한 공실과 해당 행정동의 SGIS 통계를 사용합니다. 반환된 작업 ID로 `GET /api/ai-jobs/{id}`를 호출합니다.")
     @ResponseStatus(ACCEPTED)
     Map<String, Object> analyze(@AuthenticationPrincipal Actor actor, @PathVariable UUID id,
         @RequestParam(required = false) UUID vacancyId) {
@@ -191,18 +202,24 @@ class StartupController {
     }
 
     @PutMapping("/{id}/selection")
+    @Operation(summary = "창업 위치와 업종 확정",
+        description = "계획에 선택한 업종 `industry`와 위치를 저장합니다. 공실 ID, 건물 ID, 직접 입력한 주소 중 해당하는 값을 사용합니다.")
     Map<String, Object> choose(@AuthenticationPrincipal Actor actor, @PathVariable UUID id,
         @Valid @RequestBody Selection input) {
         return startup.choose(actor.require(Role.FOUNDER), id, input);
     }
 
     @PostMapping("/{id}/faq")
+    @Operation(summary = "선택 업종의 창업 FAQ 생성 요청",
+        description = "위치와 업종 선택 후 해당 업종을 준비할 때 참고할 질문과 답변을 AI에 요청합니다. 결과는 반환된 작업 ID로 조회합니다.")
     @ResponseStatus(ACCEPTED)
     Map<String, Object> faq(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return startup.help(actor.require(Role.FOUNDER), id, null);
     }
 
     @PostMapping("/{id}/chat")
+    @Operation(summary = "선택 업종 창업 상담 요청",
+        description = "확정한 창업안에 대한 질문을 `message`로 보냅니다. 같은 계획의 완료된 상담 작업 ID를 `previousJobId`로 넣으면 해당 답변을 바탕으로 이어서 질문합니다.")
     @ResponseStatus(ACCEPTED)
     Map<String, Object> chat(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @Valid @RequestBody Chat input) {
         return startup.help(actor.require(Role.FOUNDER), id, input);

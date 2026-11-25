@@ -3,6 +3,8 @@ package com.v2v.backend;
 import static com.v2v.backend.Api.*;
 import static org.springframework.http.HttpStatus.*;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.io.IOException;
@@ -106,6 +108,7 @@ class Students {
 }
 
 @RestController
+@Tag(name = "학생 프로필·증빙", description = "학생 역할의 프로필 관리와 본인 증빙 서류 등록.")
 @RequestMapping("/api/students/me")
 class StudentController {
     private final Students students;
@@ -113,16 +116,22 @@ class StudentController {
     StudentController(Students students) { this.students = students; }
 
     @GetMapping
+    @Operation(summary = "내 학생 프로필 조회",
+        description = "로그인한 학생의 학교, 전공, 관심사, 가능 시간과 등록한 증빙 목록을 조회합니다. 증빙 목록에는 유형, 파일명과 등록 시각이 포함됩니다.")
     Map<String, Object> get(@AuthenticationPrincipal Actor actor) {
         return students.get(actor.require(Role.STUDENT));
     }
 
     @PutMapping
+    @Operation(summary = "학생 프로필 등록 또는 수정",
+        description = "학교 `university`, 관심사 `interests`, 가능 시간 `availability`와 선택 항목인 전공·학년·지도교수 등을 저장합니다.")
     Map<String, Object> save(@AuthenticationPrincipal Actor actor, @Valid @RequestBody Profile input) {
         return students.save(actor.require(Role.STUDENT), input);
     }
 
     @PutMapping(path = "/documents/{type}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "학생 증빙 서류 업로드",
+        description = "학생 프로필을 저장한 뒤 `ENROLLMENT`, `TRANSCRIPT`, `PORTFOLIO` 중 유형을 선택합니다. PDF·JPG·PNG 파일을 8MB 이하로 `file` 항목에 올립니다. 같은 유형을 올리면 기존 파일을 갱신합니다.")
     @ResponseStatus(NO_CONTENT)
     void saveDocument(@AuthenticationPrincipal Actor actor, @PathVariable Students.DocumentType type,
         @RequestPart MultipartFile file) throws IOException {
@@ -130,6 +139,8 @@ class StudentController {
     }
 
     @GetMapping("/documents/{type}")
+    @Operation(summary = "내 학생 증빙 서류 다운로드",
+        description = "로그인한 학생이 유형으로 자기 증빙 파일을 내려받습니다. 공고에 지원하려면 재학증명서 `ENROLLMENT`를 등록합니다.")
     ResponseEntity<byte[]> document(@AuthenticationPrincipal Actor actor, @PathVariable Students.DocumentType type) {
         var document = students.document(actor.require(Role.STUDENT), type);
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(document.media()))

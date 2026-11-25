@@ -3,6 +3,8 @@ package com.v2v.backend;
 import static com.v2v.backend.Api.*;
 import static org.springframework.http.HttpStatus.*;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.util.List;
@@ -128,6 +130,7 @@ class Postings {
 }
 
 @RestController
+@Tag(name = "공고·추천", description = "학생 프로젝트 공고 열람, 작성, 게시와 맞춤 추천.")
 @RequestMapping("/api")
 class PostingController {
     private final Postings postings;
@@ -135,6 +138,8 @@ class PostingController {
     PostingController(Postings postings) { this.postings = postings; }
 
     @GetMapping("/postings")
+    @Operation(summary = "모집 중인 공고 검색",
+        description = "학생이 지원할 수 있는 공개 공고 목록을 조회합니다. `keyword`로 제목과 업무 내용, `interest`로 관심 분야를 검색합니다.")
     List<Map<String, Object>> browse(@RequestParam(required = false) String keyword,
         @RequestParam(required = false) String interest, @RequestParam(defaultValue = "30") int limit,
         @RequestParam(defaultValue = "0") int offset) {
@@ -144,48 +149,66 @@ class PostingController {
     }
 
     @GetMapping("/postings/{id}")
+    @Operation(summary = "공개 공고 상세 조회",
+        description = "공고 ID로 업무 설명, 결과물, 기간, 학점, 활동비 등을 조회합니다. 게시된 공고와 매칭된 공고를 열람할 수 있습니다.")
     Map<String, Object> find(@PathVariable UUID id) { return postings.visible(id); }
 
     @GetMapping("/me/postings")
+    @Operation(summary = "내가 만든 공고 목록 조회",
+        description = "예비 또는 기존 창업자가 작성한 공고를 조회합니다. 초안과 게시 상태, 매칭 여부를 확인하는 화면에 사용합니다.")
     List<Map<String, Object>> mine(@AuthenticationPrincipal Actor actor, @RequestParam(defaultValue = "30") int limit,
         @RequestParam(defaultValue = "0") int offset) {
         return postings.mine(actor.require(Role.FOUNDER, Role.OWNER), limit, offset);
     }
 
     @GetMapping("/me/postings/{id}")
+    @Operation(summary = "내 공고 상세 조회",
+        description = "공고 작성자가 공고 ID로 자기 공고의 내용과 상태를 조회합니다. 공개 전 초안도 조회할 수 있습니다.")
     Map<String, Object> owned(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return postings.owned(actor.require(Role.FOUNDER, Role.OWNER), id);
     }
 
     @PostMapping("/postings")
+    @Operation(summary = "학생 모집 공고 초안 생성",
+        description = "제목, 맡길 일, 제출할 결과물, 기간과 지원 조건을 입력해 초안을 만듭니다. 예비 창업자는 위치와 업종을 확정한 `startupPlanId`를 연결합니다.")
     @ResponseStatus(CREATED)
     Map<String, Object> create(@AuthenticationPrincipal Actor actor, @Valid @RequestBody Posting input) {
         return postings.create(actor, input);
     }
 
     @PutMapping("/postings/{id}")
+    @Operation(summary = "게시 전 공고 수정",
+        description = "작성자가 초안 상태에서 업무, 결과물, 활동 조건과 안내 문구를 수정합니다. `startupPlanId`는 기존 공고와 같은 값으로 보냅니다.")
     Map<String, Object> edit(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @Valid @RequestBody Posting input) {
         return postings.edit(actor.require(Role.FOUNDER, Role.OWNER), id, input);
     }
 
     @PostMapping("/postings/{id}/draft-generation")
+    @Operation(summary = "공고 초안 작성 AI 요청",
+        description = "작성자가 초안의 내용을 바탕으로 AI에 문구 제안을 요청합니다. 결과는 작업 조회 API에서 받아 검토한 뒤 공고 수정 API로 저장합니다.")
     @ResponseStatus(ACCEPTED)
     Map<String, Object> draft(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return postings.draft(actor.require(Role.FOUNDER, Role.OWNER), id);
     }
 
     @PostMapping("/postings/{id}/publish")
+    @Operation(summary = "공고 게시",
+        description = "작성자가 검토를 마친 초안을 학생에게 공개합니다. 게시되면공개 공고 목록에 표시되고 지원을 받을 수 있습니다.")
     Map<String, Object> publish(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return postings.publish(actor.require(Role.FOUNDER, Role.OWNER), id);
     }
 
     @PostMapping("/postings/recommendations")
+    @Operation(summary = "학생 맞춤 공고 AI 추천 요청",
+        description = "학생 역할로 관심 직무 `interests`와 활동 가능 시간 `availability`를 보내 모집 중인 공고에 대한 추천을 요청합니다. 결과는 반환된 작업 ID로 조회합니다.")
     @ResponseStatus(ACCEPTED)
     Map<String, Object> recommend(@AuthenticationPrincipal Actor actor, @Valid @RequestBody Recommendation input) {
         return postings.recommend(actor.require(Role.STUDENT), input);
     }
 
     @PostMapping("/owner/task-planning")
+    @Operation(summary = "기존 사업자 과제 정리 AI 요청",
+        description = "기존 사업자가 업종 `industry`, 해결하고 싶은 문제 `problem`, 목표 `goal`을 보냅니다. AI가 학생에게 맡길 과제와 우선순위를 제안하는 작업을 접수합니다.")
     @ResponseStatus(ACCEPTED)
     Map<String, Object> ownerPlanning(@AuthenticationPrincipal Actor actor, @Valid @RequestBody OwnerBrief input) {
         return postings.ownerPlanning(actor.require(Role.OWNER), input);

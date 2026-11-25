@@ -3,6 +3,8 @@ package com.v2v.backend;
 import static com.v2v.backend.Api.*;
 import static org.springframework.http.HttpStatus.*;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.net.URI;
@@ -170,6 +172,7 @@ class Applications {
 }
 
 @RestController
+@Tag(name = "지원·매칭", description = "학생 지원, 사업자의 선발과 프로젝트 진행 관리.")
 @RequestMapping("/api")
 class ApplicationController {
     private final Applications applications;
@@ -177,24 +180,32 @@ class ApplicationController {
     ApplicationController(Applications applications) { this.applications = applications; }
 
     @PostMapping("/postings/{id}/application-questions")
+    @Operation(summary = "학생 지원 질문 생성 요청",
+        description = "학생이 모집 중인 공고에 지원할 때 답할 질문 두 개를 AI에 요청합니다. 응답의 작업 ID로 질문을 조회합니다.")
     @ResponseStatus(ACCEPTED)
     Map<String, Object> questions(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return applications.questions(actor.require(Role.STUDENT), id);
     }
 
     @PostMapping("/postings/{id}/applications")
+    @Operation(summary = "공고에 학생 지원서 제출",
+        description = "재학증명서가 등록된 학생이 해당 공고의 완료된 질문 작업 ID `questionJobId`와 답변 두 개 `answers`를 제출합니다.")
     @ResponseStatus(CREATED)
     Map<String, Object> apply(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @Valid @RequestBody Application input) {
         return applications.apply(actor.require(Role.STUDENT), id, input);
     }
 
     @GetMapping("/me/applications")
+    @Operation(summary = "내 지원 내역 조회",
+        description = "로그인한 학생의 지원 공고, 제출 시각과 지원 상태를 조회합니다. `limit`과 `offset`으로 목록을 나눠 읽습니다.")
     List<Map<String, Object>> mine(@AuthenticationPrincipal Actor actor, @RequestParam(defaultValue = "30") int limit,
         @RequestParam(defaultValue = "0") int offset) {
         return applications.mine(actor.require(Role.STUDENT), limit, offset);
     }
 
     @GetMapping("/postings/{id}/applications")
+    @Operation(summary = "내 공고에 들어온 지원서 조회",
+        description = "공고 작성자가 해당 공고의 지원자와 답변을 조회합니다. `major`와 `academicYear`로 지원자를 필터링할 수 있습니다.")
     List<Map<String, Object>> received(@AuthenticationPrincipal Actor actor, @PathVariable UUID id,
         @RequestParam(required = false) String major, @RequestParam(required = false) Integer academicYear,
         @RequestParam(defaultValue = "30") int limit, @RequestParam(defaultValue = "0") int offset) {
@@ -202,33 +213,45 @@ class ApplicationController {
     }
 
     @PostMapping("/postings/{id}/applications/{applicationId}/match")
+    @Operation(summary = "지원자 선택 및 매칭 확정",
+        description = "공고 작성자가 공고 ID와 지원서 ID로 참가 학생 한 명을 선택합니다. 성공하면 프로젝트 매칭이 생성됩니다.")
     @ResponseStatus(CREATED)
     Map<String, Object> select(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @PathVariable UUID applicationId) {
         return applications.select(actor.require(Role.FOUNDER, Role.OWNER), id, applicationId);
     }
 
     @GetMapping("/me/matches")
+    @Operation(summary = "내 프로젝트 매칭 목록 조회",
+        description = "예비·기존 창업자는 본인 공고의 매칭을, 학생은 본인이 참가하는 프로젝트를 조회합니다.")
     List<Map<String, Object>> matches(@AuthenticationPrincipal Actor actor, @RequestParam(defaultValue = "30") int limit,
         @RequestParam(defaultValue = "0") int offset) {
         return applications.matches(actor.require(Role.FOUNDER, Role.OWNER, Role.STUDENT), actor.role() == Role.STUDENT, false, limit, offset);
     }
 
     @GetMapping("/matches/{id}")
+    @Operation(summary = "프로젝트 매칭 상세 조회",
+        description = "공고 작성자 또는 매칭된 학생이 매칭 ID로 프로젝트 상태, 결과물 정보와 인수인계 내용을 확인합니다.")
     Map<String, Object> match(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return applications.match(actor.require(Role.FOUNDER, Role.OWNER, Role.STUDENT), id, actor.role() == Role.STUDENT);
     }
 
     @PostMapping("/matches/{id}/start")
+    @Operation(summary = "매칭된 프로젝트 시작",
+        description = "공고 작성자가 해당 매칭을 `IN_PROGRESS`로 전환합니다. 주소의 `id`에는 공고 ID 대신 매칭 ID를 입력합니다.")
     Map<String, Object> start(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return applications.start(actor.require(Role.FOUNDER, Role.OWNER), id);
     }
 
     @PostMapping("/matches/{id}/complete")
+    @Operation(summary = "프로젝트 완료 및 인수인계 등록",
+        description = "공고 작성자가 진행 중인 프로젝트의 `handoverNotes`와 선택 항목인 HTTPS 결과물 링크 `handoverUrl`을 입력해 완료 처리합니다.")
     Map<String, Object> complete(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @Valid @RequestBody Handover input) {
         return applications.complete(actor.require(Role.FOUNDER, Role.OWNER), id, input);
     }
 
     @GetMapping("/students/me/career-cards")
+    @Operation(summary = "완료한 프로젝트 경력 카드 조회",
+        description = "학생이 완료한 프로젝트의 공고, 활동 기간과 결과물 정보를 조회합니다. 완료 상태의 매칭을 반환합니다.")
     List<Map<String, Object>> career(@AuthenticationPrincipal Actor actor, @RequestParam(defaultValue = "30") int limit,
         @RequestParam(defaultValue = "0") int offset) {
         return applications.matches(actor.require(Role.STUDENT), true, true, limit, offset);

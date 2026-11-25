@@ -38,7 +38,7 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 
 ## 프론트 API
 
-서버를 실행한 뒤 `http://127.0.0.1:8080/swagger-ui.html`에서 명세를 보고 **Try it out**으로 요청을 보낼 수 있습니다. 공동 서버를 사용하면 서버 주소 뒤에 `/swagger-ui.html`을 붙입니다. OpenAPI JSON은 `/v3/api-docs`에서 받을 수 있습니다.
+서버를 실행한 뒤 `http://127.0.0.1:8080/swagger-ui.html`에서 각 API 이름과 설명을 펼쳐 보고 **Try it out**으로 요청을 보낼 수 있습니다. `127.0.0.1`은 브라우저가 열린 PC 자신을 가리킵니다. 같은 서버와 데이터를 사용할 팀원에게는 백엔드를 배포한 주소에 `/swagger-ui.html`을 붙여 공유합니다. OpenAPI JSON은 같은 서버의 `/v3/api-docs`에서 받을 수 있습니다.
 
 1. `GET /api/health`를 실행해 연결 상태를 확인합니다.
 2. `POST /api/auth/login`을 실행한 뒤, **Authorize → BearerAuth**에 응답의 `token` 값만 넣습니다. 역할별 API는 계정의 역할 설정이 필요합니다.
