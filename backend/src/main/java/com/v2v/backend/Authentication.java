@@ -72,7 +72,8 @@ class SecurityConfig {
                 .permitAll()
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/catalog/**", "/api/buildings",
                     "/api/buildings/*/vacancies", "/api/buildings/*/opinions", "/api/buildings/*/demand",
-                    "/api/vacancies", "/api/postings", "/api/postings/*").permitAll()
+                    "/api/vacancies", "/api/postings", "/api/postings/*",
+                    "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml").permitAll()
                 .anyRequest().authenticated())
             .addFilterBefore(new OncePerRequestFilter() {
                 @Override

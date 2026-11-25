@@ -17,6 +17,11 @@ server:
   port: ${PORT:8080}
   error:
     include-message: never
+springdoc:
+  paths-to-match: /api/**
+  swagger-ui:
+    version: 5.35.1
+    disable-swagger-default-url: true
 v2v:
   cors-origins: ${V2V_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173}
   nts-key: ${V2V_NTS_API_KEY:}

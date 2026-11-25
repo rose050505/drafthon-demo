@@ -38,6 +38,12 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 
 ## 프론트 API
 
+서버를 실행한 뒤 `http://127.0.0.1:8080/swagger-ui.html`에서 명세를 보고 **Try it out**으로 요청을 보낼 수 있습니다. 공동 서버를 사용하면 서버 주소 뒤에 `/swagger-ui.html`을 붙입니다. OpenAPI JSON은 `/v3/api-docs`에서 받을 수 있습니다.
+
+1. `GET /api/health`를 실행해 연결 상태를 확인합니다.
+2. `POST /api/auth/login`을 실행한 뒤, **Authorize → BearerAuth**에 응답의 `token` 값만 넣습니다. 역할별 API는 계정의 역할 설정이 필요합니다.
+3. AI 워커와 공실 등록 API에는 각 담당자에게 발급된 연동 토큰을 **Authorize**의 해당 헤더 항목에 입력합니다. 로그인 토큰과 두 연동 토큰은 Swagger 화면에서 각자 입력합니다.
+
 일반 사용자는 `Authorization: Bearer <token>`으로 인증합니다. 토큰은 회원가입 또는 로그인 응답의 `token`이고 유효기간은 24시간입니다. JSON 요청의 Content-Type은 `application/json`입니다.
 
 | 흐름 | 메서드 및 경로 | 주요 입력과 동작 |
