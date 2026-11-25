@@ -1,0 +1,6 @@
+# 팀 코드(실시간 AI 서버 중계용) — 저장소에 넣지 않음
+.team_code
+# 원본 상가정보 CSV(각 60MB대) — 공공데이터포털에서 받아 tools/build_data.py 실행
+data_src/*.csv
+*.webm
+node_modules/
