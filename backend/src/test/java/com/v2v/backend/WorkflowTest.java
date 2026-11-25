@@ -123,8 +123,20 @@ class WorkflowTest {
         assertEquals("bearer", schemes.path("BearerAuth").path("scheme").asText());
         assertEquals("X-V2V-AI-Token", schemes.path("X-V2V-AI-Token").path("name").asText());
         assertEquals("X-V2V-Catalog-Token", schemes.path("X-V2V-Catalog-Token").path("name").asText());
-        assertFalse(docs.path("paths").path("/api/health").path("get").has("security"));
-        var analysis = docs.path("paths").path("/api/startup-plans/{id}/analysis").path("post");
+        var paths = docs.path("paths");
+        assertFalse(paths.path("/api/health").path("get").has("security"));
+        for (var path : paths.properties()) {
+            for (String method : List.of("get", "post", "put", "delete", "patch", "head", "options", "trace")) {
+                var operation = path.getValue().path(method);
+                if (!operation.isObject()) continue;
+                String endpoint = method + " " + path.getKey();
+                assertFalse(operation.path("summary").asText("").isBlank(), endpoint + " summary");
+                assertFalse(operation.path("description").asText("").isBlank(), endpoint + " description");
+            }
+        }
+        var analysis = paths.path("/api/startup-plans/{id}/analysis").path("post");
+        assertEquals("창업 입지·업종 AI 분석 요청", analysis.path("summary").asText());
+        assertTrue(analysis.path("description").asText().contains("vacancyId"));
         assertTrue(analysis.path("security").path(0).has("BearerAuth"));
         var worker = docs.path("paths").path("/api/integrations/ai/jobs/claim").path("post");
         assertTrue(worker.path("security").path(0).has("X-V2V-AI-Token"));

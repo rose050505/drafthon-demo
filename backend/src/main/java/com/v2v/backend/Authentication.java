@@ -3,6 +3,8 @@ package com.v2v.backend;
 import static com.v2v.backend.Api.*;
 import static org.springframework.http.HttpStatus.*;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -196,6 +198,7 @@ class Accounts {
 }
 
 @RestController
+@Tag(name = "서버·계정", description = "서버 상태 확인, 회원가입, 로그인과 계정 역할 설정.")
 @RequestMapping("/api")
 class AuthController {
     private final Accounts accounts;
@@ -207,23 +210,35 @@ class AuthController {
     }
 
     @GetMapping("/health")
+    @Operation(summary = "서버 연결 상태 확인",
+        description = "서버가 요청을 받을 수 있으면 `status`가 `UP`으로 응답합니다. 로그인 없이 호출합니다.")
     Map<String, String> health() { return Map.of("status", "UP"); }
 
     @PostMapping("/auth/signup")
+    @Operation(summary = "회원가입",
+        description = "이메일, 비밀번호, 표시 이름으로 계정을 만듭니다. 응답에는 로그인용 `token`과 만료 시각, 계정 정보가 들어 있습니다.")
     @ResponseStatus(CREATED)
     Accounts.Session signup(@Valid @RequestBody Signup input) { return accounts.signup(input); }
 
     @PostMapping("/auth/login")
+    @Operation(summary = "로그인 토큰 발급",
+        description = "가입한 이메일과 비밀번호로 로그인합니다. Swagger의 Authorize → BearerAuth에 응답의 `token` 값을 넣으세요.")
     Accounts.Session login(@Valid @RequestBody Credentials input) { return accounts.login(input); }
 
     @PostMapping("/auth/logout")
+    @Operation(summary = "로그아웃",
+        description = "현재 요청에 사용한 로그인 토큰을 폐기합니다. 성공하면 응답 본문 없이 204를 반환합니다.")
     @ResponseStatus(NO_CONTENT)
     void logout(@AuthenticationPrincipal Actor actor) { accounts.logout(actor); }
 
     @GetMapping("/me")
+    @Operation(summary = "내 계정과 역할 조회",
+        description = "로그인한 계정의 기본 정보와 선택한 역할을 조회합니다. 예비 창업자는 등록한 창업 예산도 확인할 수 있습니다.")
     Map<String, Object> me(@AuthenticationPrincipal Actor actor) { return accounts.profile(actor.id()); }
 
     @PutMapping("/me/role")
+    @Operation(summary = "가입 후 역할 설정",
+        description = "`FOUNDER`는 `founderBudget`에 원 단위 예산을, `OWNER`는 `businessNumber`에 사업자등록번호를 입력합니다. `STUDENT`는 역할만 입력합니다. 계정당 한 번 설정합니다.")
     Map<String, Object> role(@AuthenticationPrincipal Actor actor, @Valid @RequestBody Onboarding input) {
         if (actor.role() != null) throw conflict("이미 역할을 선택했습니다.");
         if ((input.role() == Role.FOUNDER) != (input.founderBudget() != null)) {

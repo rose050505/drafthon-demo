@@ -3,6 +3,8 @@ package com.v2v.backend;
 import static com.v2v.backend.Api.*;
 import static org.springframework.http.HttpStatus.*;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.util.LinkedHashMap;
@@ -134,6 +136,7 @@ class AiJobs {
 }
 
 @RestController
+@Tag(name = "AI 작업", description = "사용자의 분석 결과 조회와 AI 워커의 작업 처리.")
 @RequestMapping("/api")
 class AiController {
     private final AiJobs jobs;
@@ -145,11 +148,15 @@ class AiController {
     }
 
     @GetMapping("/ai-jobs/{id}")
+    @Operation(summary = "내 AI 작업 상태와 결과 조회",
+        description = "분석이나 추천 API에서 받은 작업 ID로 본인 작업의 상태와 결과를 조회합니다. `QUEUED` 또는 `RUNNING`이면 처리 중이고, `COMPLETED`면 `result`를 사용합니다.")
     Map<String, Object> read(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return jobs.owned(id, actor.id());
     }
 
     @PostMapping("/integrations/ai/jobs/claim")
+    @Operation(summary = "AI 워커가 대기 작업 가져오기",
+        description = "AI 워커 토큰으로 대기 중인 작업 하나를 가져옵니다. 작업 종류, 입력 데이터, `leaseId`와 만료 시각을 반환합니다. 처리할 작업이 없으면 HTTP 204입니다.")
     ResponseEntity<Map<String, Object>> claim(@RequestHeader(name = "X-V2V-AI-Token", required = false) String token) {
         integrationToken(config.aiToken(), token);
         var job = jobs.claim();
@@ -157,6 +164,8 @@ class AiController {
     }
 
     @PutMapping("/integrations/ai/jobs/{id}/result")
+    @Operation(summary = "AI 워커 처리 결과 저장",
+        description = "작업을 가져올 때 받은 `leaseId`, 상태 `COMPLETED` 또는 `FAILED`, JSON 객체 `result`를 보냅니다. 작업 할당 시간 안에 제출해야 합니다.")
     @ResponseStatus(NO_CONTENT)
     void finish(@RequestHeader(name = "X-V2V-AI-Token", required = false) String token, @PathVariable UUID id,
         @Valid @RequestBody Result result) {
