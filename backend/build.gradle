@@ -12,6 +12,10 @@ java {
 }
 
 repositories {
+    def mirror = providers.environmentVariable('V2V_MAVEN_CENTRAL_MIRROR').orNull
+    if (mirror) {
+        maven { url = uri(mirror) }
+    }
     mavenCentral()
 }
 

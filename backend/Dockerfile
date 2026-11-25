@@ -1,5 +1,6 @@
 FROM eclipse-temurin:21-jdk-jammy AS build
 WORKDIR /workspace
+ARG V2V_MAVEN_CENTRAL_MIRROR=https://maven-central-asia.storage-download.googleapis.com/maven2/
 COPY gradlew build.gradle settings.gradle ./
 COPY gradle ./gradle
 COPY src ./src
