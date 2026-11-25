@@ -29,8 +29,8 @@ class Applications {
         select m.id, m.posting_id as "postingId", p.title, p.interest, p.deliverable, p.period_weeks as "periodWeeks",
                p.academic_credit as "academicCredit", p.stipend_krw as "stipendKrw", m.application_id as "applicationId",
                m.status, m.handover_url as "handoverUrl", m.handover_notes as "handoverNotes", m.created_at as "createdAt",
-               m.started_at as "startedAt", m.completed_at as "completedAt"
-        from matches m join postings p on p.id = m.posting_id
+               m.started_at as "startedAt", m.completed_at as "completedAt", p.advisor_name as "advisorName"
+        from posting_team_matches m join postings p on p.id = m.posting_id
         """;
     private final JdbcTemplate db;
     private final Postings postings;
@@ -93,17 +93,22 @@ class Applications {
 
     @Transactional
     Map<String, Object> select(UUID owner, UUID posting, UUID application) {
-        lockPosting(posting, owner);
+        int capacity = lockPosting(posting, owner);
+        int selected = db.queryForObject("select count(*) from posting_team_matches where posting_id = ?", Integer.class, posting);
+        if (selected >= capacity) throw conflict("학생 모집 인원이 이미 찼습니다.");
         UUID student = first(db.queryForList("""
             select student_id from applications where id = ? and posting_id = ? and status = 'SUBMITTED'
             """, UUID.class, application, posting));
         UUID match = UUID.randomUUID();
         db.update("""
-            insert into matches(id, posting_id, application_id, student_id, status) values (?, ?, ?, ?, 'MATCHED')
+            insert into posting_team_matches(id, posting_id, application_id, student_id, status)
+            values (?, ?, ?, ?, 'MATCHED')
             """, match, posting, application, student);
         db.update("update applications set status = 'SELECTED' where id = ?", application);
-        db.update("update applications set status = 'NOT_SELECTED' where posting_id = ? and id <> ?", posting, application);
-        db.update("update postings set status = 'MATCHED' where id = ?", posting);
+        if (selected + 1 == capacity) {
+            db.update("update applications set status = 'NOT_SELECTED' where posting_id = ? and status = 'SUBMITTED'", posting);
+            db.update("update postings set status = 'MATCHED' where id = ?", posting);
+        }
         return match(owner, match, false);
     }
 
@@ -123,7 +128,7 @@ class Applications {
     Map<String, Object> start(UUID owner, UUID match) {
         match(owner, match, false);
         int changed = db.update("""
-            update matches set status = 'IN_PROGRESS', started_at = current_timestamp
+            update posting_team_matches set status = 'IN_PROGRESS', started_at = current_timestamp
             where id = ? and status = 'MATCHED'
             """, match);
         var result = match(owner, match, false);
@@ -145,19 +150,20 @@ class Applications {
             }
         }
         int changed = db.update("""
-            update matches set status = 'COMPLETED', handover_url = ?, handover_notes = ?, completed_at = current_timestamp
+            update posting_team_matches set status = 'COMPLETED', handover_url = ?, handover_notes = ?, completed_at = current_timestamp
             where id = ? and status = 'IN_PROGRESS'
             """, url, input.handoverNotes().strip(), match);
         if (changed == 0) throw conflict("진행 중인 프로젝트만 완료할 수 있습니다.");
         return match(owner, match, false);
     }
 
-    private void lockPosting(UUID posting, UUID owner) {
-        String query = "select status from postings where id = ?";
-        String status = owner == null
-            ? first(db.queryForList(query + " for update", String.class, posting))
-            : first(db.queryForList(query + " and owner_id = ? for update", String.class, posting, owner));
-        requirePublished(status);
+    private int lockPosting(UUID posting, UUID owner) {
+        String query = "select status, student_limit from postings where id = ?";
+        var row = owner == null
+            ? first(db.queryForList(query + " for update", posting))
+            : first(db.queryForList(query + " and owner_id = ? for update", posting, owner));
+        requirePublished((String) row.get("status"));
+        return ((Number) row.get("student_limit")).intValue();
     }
 
     private static void requirePublished(String status) {
@@ -214,7 +220,7 @@ class ApplicationController {
 
     @PostMapping("/postings/{id}/applications/{applicationId}/match")
     @Operation(summary = "지원자 선택 및 매칭 확정",
-        description = "공고 작성자가 공고 ID와 지원서 ID로 참가 학생 한 명을 선택합니다. 성공하면 프로젝트 매칭이 생성됩니다.")
+        description = "공고 작성자가 공고 ID와 지원서 ID로 참가 학생을 추가합니다. 설정한 인원에 도달하면 모집이 마감되며 최대 4명입니다.")
     @ResponseStatus(CREATED)
     Map<String, Object> select(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @PathVariable UUID applicationId) {
         return applications.select(actor.require(Role.FOUNDER, Role.OWNER), id, applicationId);

@@ -12,6 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.stereotype.Service;
@@ -50,29 +51,56 @@ class Catalog {
         return first(db.queryForList(VACANCY + " where v.id = ?", id));
     }
 
-    List<Map<String, Object>> vacancies(UUID building, int limit, int offset) {
+    List<Map<String, Object>> vacancies(UUID building, int limit, int offset, boolean includeUnverified) {
         if (building != null) building(building);
         return db.queryForList(VACANCY + """
-            where (? = false or v.building_id = ?) and v.status = 'AVAILABLE'
-            order by v.verified_at desc, v.id limit ? offset ?
-            """, building != null, building, limit(limit), offset(offset));
+            where (? = false or v.building_id = ?) and (v.status = 'AVAILABLE' or (? and v.status = 'UNVERIFIED'))
+            order by v.verified_at desc nulls last, v.id limit ? offset ?
+            """, building != null, building, includeUnverified, limit(limit), offset(offset));
     }
 
-    List<Map<String, Object>> opinions(UUID id, int limit, int offset) {
+    List<Map<String, Object>> opinions(UUID id, UUID account, UUID vacancy, int limit, int offset) {
         building(id);
         return db.queryForList("""
-            select id, desired_business as "desiredBusiness", reason, created_at as "createdAt"
-            from building_opinions where building_id = ? order by created_at desc, id desc limit ? offset ?
-            """, id, limit(limit), offset(offset));
+            select o.id, o.desired_business as "desiredBusiness", o.category, o.reason, o.created_at as "createdAt",
+                o.vacancy_id as "vacancyId",
+                (select count(*) from building_opinion_likes l where l.opinion_id = o.id) as "likeCount",
+                exists (select 1 from building_opinion_likes l where l.opinion_id = o.id and l.account_id = ?) as "likedByMe"
+            from building_opinions o
+            where o.building_id = ? and (? = false or o.vacancy_id = ?)
+            order by o.created_at desc, o.id desc limit ? offset ?
+            """, account, id, vacancy != null, vacancy, limit(limit), offset(offset));
     }
 
     Map<String, Object> addOpinion(UUID id, UUID author, CatalogController.Opinion input) {
         building(id);
+        if (input.vacancyId() != null && !id.equals(vacancy(input.vacancyId()).get("buildingId"))) {
+            throw invalid("건물에 속한 공실을 선택하세요.");
+        }
+        String category = optional(input.category());
         UUID opinion = UUID.randomUUID();
         db.update("""
-            insert into building_opinions(id, building_id, author_id, desired_business, reason) values (?, ?, ?, ?, ?)
-            """, opinion, id, author, input.desiredBusiness().strip(), input.reason().strip());
+            insert into building_opinions(id, building_id, author_id, desired_business, reason, category, vacancy_id)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """, opinion, id, author, input.desiredBusiness().strip(), input.reason().strip(),
+            category == null ? "기타" : category, input.vacancyId());
         return Map.of("id", opinion);
+    }
+
+    Map<String, Object> opinionLike(UUID building, UUID opinion, UUID account, boolean liked) {
+        first(db.queryForList("select id from building_opinions where id = ? and building_id = ?", UUID.class, opinion, building));
+        if (liked) {
+            db.update("""
+                insert into building_opinion_likes(opinion_id, account_id) values (?, ?) on conflict do nothing
+                """, opinion, account);
+        } else {
+            db.update("delete from building_opinion_likes where opinion_id = ? and account_id = ?", opinion, account);
+        }
+        return db.queryForMap("""
+            select count(*) as "likeCount", exists (
+                select 1 from building_opinion_likes where opinion_id = ? and account_id = ?
+            ) as "likedByMe" from building_opinion_likes where opinion_id = ?
+            """, opinion, account, opinion);
     }
 
     List<Map<String, Object>> demand(UUID id) {
@@ -82,7 +110,7 @@ class Catalog {
 
     Map<String, Object> analyze(UUID id) {
         var building = building(id);
-        var opinions = opinions(id, 100, 0);
+        var opinions = opinions(id, null, null, 100, 0);
         if (opinions.isEmpty()) throw conflict("분석할 주민 의견이 없습니다.");
         int total = db.queryForObject("select count(*) from building_opinions where building_id = ?", Integer.class, id);
         return ai.queue(null, JobKind.BUILDING_DEMAND, id,
@@ -168,26 +196,40 @@ class CatalogController {
 
     @GetMapping({"/vacancies", "/buildings/{id}/vacancies"})
     @Operation(summary = "입점 가능한 공실 목록 조회",
-        description = "`/api/vacancies`는 전체 공실을, `/api/buildings/{id}/vacancies`는 지정 건물의 공실을 조회합니다. 입점 가능 상태인 매물의 확인 시각, 면적과 임대 조건을 반환합니다.")
+        description = "`/api/vacancies`는 전체 공실을, `/api/buildings/{id}/vacancies`는 지정 건물의 공실을 조회합니다. `status`가 `AVAILABLE`이면 입점 가능, `UNVERIFIED`이면 확인 전입니다.")
     List<Map<String, Object>> vacancies(@PathVariable(required = false) UUID id,
         @RequestParam(defaultValue = "30") int limit, @RequestParam(defaultValue = "0") int offset) {
-        return catalog.vacancies(id, limit, offset);
+        return catalog.vacancies(id, limit, offset, true);
     }
 
     @GetMapping("/buildings/{id}/opinions")
     @Operation(summary = "건물별 주민 의견 조회",
-        description = "건물 ID로 주민이 제안한 업종과 이유를 최신순으로 조회합니다. `limit`과 `offset`으로 페이지를 나눠 읽습니다.")
+        description = "건물에 등록된 의견과 `category`, `likeCount`, `likedByMe`를 조회합니다. 특정 공실만 보려면 `vacancyId`를 지정합니다. 익명 조회에서는 `likedByMe`가 false입니다.")
     List<Map<String, Object>> opinions(@PathVariable UUID id, @RequestParam(defaultValue = "30") int limit,
-        @RequestParam(defaultValue = "0") int offset) {
-        return catalog.opinions(id, limit, offset);
+        @RequestParam(defaultValue = "0") int offset, @RequestParam(required = false) UUID vacancyId,
+        @AuthenticationPrincipal @Nullable Actor actor) {
+        return catalog.opinions(id, actor == null ? null : actor.id(), vacancyId, limit, offset);
     }
 
     @PostMapping("/buildings/{id}/opinions")
     @Operation(summary = "건물에 주민 의견 등록",
-        description = "로그인 후 건물 ID와 희망 업종 `desiredBusiness`, 필요한 이유 `reason`을 입력합니다. 등록한 의견의 ID가 반환됩니다.")
+        description = "역할 설정 전에도 로그인하면 의견을 등록할 수 있습니다. `desiredBusiness`, `reason`과 선택값 `category`, `vacancyId`를 받습니다.")
     @ResponseStatus(CREATED)
     Map<String, Object> opinion(@PathVariable UUID id, @AuthenticationPrincipal Actor actor, @Valid @RequestBody Opinion data) {
         return catalog.addOpinion(id, actor.id(), data);
+    }
+
+    @PutMapping("/buildings/{id}/opinions/{opinionId}/like")
+    @Operation(summary = "주민 의견 공감",
+        description = "로그인한 계정으로 해당 의견에 공감합니다. 같은 계정의 반복 요청은 한 번으로 계산합니다.")
+    Map<String, Object> like(@PathVariable UUID id, @PathVariable UUID opinionId, @AuthenticationPrincipal Actor actor) {
+        return catalog.opinionLike(id, opinionId, actor.id(), true);
+    }
+
+    @DeleteMapping("/buildings/{id}/opinions/{opinionId}/like")
+    @Operation(summary = "주민 의견 공감 취소", description = "본인 계정의 공감을 취소하고 갱신된 전체 공감 수를 반환합니다.")
+    Map<String, Object> unlike(@PathVariable UUID id, @PathVariable UUID opinionId, @AuthenticationPrincipal Actor actor) {
+        return catalog.opinionLike(id, opinionId, actor.id(), false);
     }
 
     @GetMapping("/buildings/{id}/demand")
@@ -244,5 +286,6 @@ class CatalogController {
         @PositiveOrZero Long depositKrw, @PositiveOrZero Long monthlyRentKrw, @NotNull VacancyStatus status,
         @NotBlank @Size(max = 250) String source, OffsetDateTime verifiedAt) {}
 
-    record Opinion(@NotBlank @Size(max = 160) String desiredBusiness, @NotBlank @Size(max = 1500) String reason) {}
+    record Opinion(@NotBlank @Size(max = 160) String desiredBusiness, @NotBlank @Size(max = 1500) String reason,
+        @Size(max = 100) String category, UUID vacancyId) {}
 }

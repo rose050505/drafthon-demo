@@ -5,6 +5,7 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.jspecify.annotations.Nullable;
 import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -36,6 +37,9 @@ class OpenApiConfig {
         return (operation, handler) -> {
             for (var parameter : handler.getMethodParameters()) {
                 if (parameter.hasParameterAnnotation(AuthenticationPrincipal.class)) {
+                    if (parameter.getParameter().getAnnotatedType().isAnnotationPresent(Nullable.class)) {
+                        operation.addSecurityItem(new SecurityRequirement());
+                    }
                     operation.addSecurityItem(new SecurityRequirement().addList(SESSION_TOKEN));
                 }
                 var header = parameter.getParameterAnnotation(RequestHeader.class);

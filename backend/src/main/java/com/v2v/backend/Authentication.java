@@ -13,6 +13,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 import java.io.IOException;
@@ -23,6 +24,7 @@ import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -45,7 +47,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-enum Role { FOUNDER, OWNER, STUDENT }
+enum Role { FOUNDER, OWNER, STUDENT, OPERATOR }
 
 record Actor(UUID id, Role role, String tokenHash) {
     UUID require(Role... allowed) {
@@ -103,28 +105,35 @@ class Accounts {
     private final JdbcTemplate db;
     private final String unknownPasswordHash = BCRYPT.encode(newToken());
 
-    Accounts(JdbcTemplate db) {
+    private final V2vProperties config;
+
+    Accounts(JdbcTemplate db, V2vProperties config) {
         this.db = db;
+        this.config = config;
     }
 
     @Transactional
     Session signup(AuthController.Signup data) {
         passwordLength(data.password());
         UUID id = UUID.randomUUID();
-        db.update("insert into accounts(id, email, password_hash, display_name) values (?, ?, ?, ?)",
-            id, email(data.email()), BCRYPT.encode(data.password()), data.displayName().strip());
+        db.update("insert into accounts(id, email, password_hash, display_name, username) values (?, ?, ?, ?, ?)",
+            id, normalize(data.email()), BCRYPT.encode(data.password()), data.displayName().strip(),
+            data.username() == null ? null : normalize(data.username()));
         return session(id);
     }
 
     @Transactional
     Session login(AuthController.Credentials data) {
         passwordLength(data.password());
-        List<CredentialsRow> results = db.query("select id, password_hash from accounts where email = ?",
+        String email = optional(data.email());
+        String username = optional(data.username());
+        if ((email == null) == (username == null)) throw invalid("이메일 또는 아이디 중 하나를 입력하세요.");
+        List<CredentialsRow> results = db.query("select id, password_hash from accounts where email = ? or username = ?",
             (rs, row) -> new CredentialsRow(rs.getObject("id", UUID.class), rs.getString("password_hash")),
-            email(data.email()));
+            email == null ? null : normalize(email), username == null ? null : normalize(username));
         CredentialsRow account = results.isEmpty() ? null : results.getFirst();
         boolean valid = BCRYPT.matches(data.password(), account == null ? unknownPasswordHash : account.hash());
-        if (!valid || account == null) throw error(UNAUTHORIZED, "이메일 또는 비밀번호를 확인하세요.");
+        if (!valid || account == null) throw error(UNAUTHORIZED, "로그인 정보와 비밀번호를 확인하세요.");
         return session(account.id());
     }
 
@@ -132,27 +141,59 @@ class Accounts {
         if (!token.matches("[A-Za-z0-9_-]{43}")) return null;
         String hash = digest(token);
         return db.query("""
-            select a.id, a.role from access_tokens t join accounts a on a.id = t.account_id
+            select a.id, a.active_role as role from access_tokens t join accounts a on a.id = t.account_id
             where t.token_hash = ? and t.expires_at > current_timestamp
-            """, (rs, row) -> new Actor(rs.getObject("id", UUID.class),
-                rs.getString("role") == null ? null : Role.valueOf(rs.getString("role")), hash), hash)
+            """, (rs, row) -> {
+                UUID id = rs.getObject("id", UUID.class);
+                String role = activeRole(id, rs.getString("role"));
+                return new Actor(id, role == null ? null : Role.valueOf(role), hash);
+            }, hash)
             .stream().findFirst().orElse(null);
     }
 
     Map<String, Object> profile(UUID id) {
-        return first(db.queryForList("""
-            select id, email, display_name as "displayName", role, founder_budget as "founderBudget",
+        var profile = first(db.queryForList("""
+            select id, email, username, display_name as "displayName", active_role as role, founder_budget as "founderBudget",
                    business_number as "businessNumber", business_status_checked_at as "businessStatusCheckedAt"
             from accounts where id = ?
             """, id));
+        var roles = new ArrayList<>(db.queryForList("""
+            select role from account_roles where account_id = ? and role <> 'OPERATOR' order by role
+            """, String.class, id));
+        if (isOperator(id)) roles.add("OPERATOR");
+        profile.put("roles", roles);
+        profile.put("role", activeRole(id, (String) profile.get("role")));
+        return profile;
     }
 
+    @Transactional
     void onboard(Actor actor, AuthController.Onboarding data, String businessNumber) {
-        int updated = db.update("""
-            update accounts set role = ?, founder_budget = ?, business_number = ?, business_status_checked_at = ?
-            where id = ? and role is null
+        first(db.queryForList("select id from accounts where id = ? for update", UUID.class, actor.id()));
+        var profile = profile(actor.id());
+        if (data.role() == Role.FOUNDER && data.founderBudget() == null && profile.get("founderBudget") == null) {
+            throw invalid("예비 창업자 역할의 창업 예산을 입력하세요.");
+        }
+        if (data.role() == Role.OWNER && businessNumber == null && profile.get("businessStatusCheckedAt") == null) {
+            throw invalid("기존 사업자 역할의 사업자등록번호를 입력하세요.");
+        }
+        List<?> roles = (List<?>) profile.get("roles");
+        if (!roles.contains(data.role().name())) {
+            if (data.role() == Role.OPERATOR) throw error(FORBIDDEN, "운영단 역할은 관리자가 부여합니다.");
+            db.update("insert into account_roles(account_id, role) values (?, ?)", actor.id(), data.role().name());
+        }
+        db.update("""
+            update accounts set active_role = ?, founder_budget = coalesce(?, founder_budget),
+                business_number = coalesce(?, business_number), business_status_checked_at = coalesce(?, business_status_checked_at)
+            where id = ?
             """, data.role().name(), data.founderBudget(), businessNumber, businessNumber == null ? null : now(), actor.id());
-        if (updated == 0) throw conflict("이미 역할을 선택했습니다.");
+    }
+
+    private String activeRole(UUID id, String role) {
+        return "OPERATOR".equals(role) && !isOperator(id) ? null : role;
+    }
+
+    private boolean isOperator(UUID id) {
+        return config.operatorAccountIds() != null && config.operatorAccountIds().contains(id);
     }
 
     void logout(Actor actor) {
@@ -177,7 +218,7 @@ class Accounts {
         if (password.getBytes(StandardCharsets.UTF_8).length > 72) throw invalid("비밀번호는 UTF-8 기준 72바이트 이하여야 합니다.");
     }
 
-    private static String email(String address) {
+    private static String normalize(String address) {
         return address.strip().toLowerCase(Locale.ROOT);
     }
 
@@ -216,13 +257,13 @@ class AuthController {
 
     @PostMapping("/auth/signup")
     @Operation(summary = "회원가입",
-        description = "이메일, 비밀번호, 표시 이름으로 계정을 만듭니다. 응답에는 로그인용 `token`과 만료 시각, 계정 정보가 들어 있습니다.")
+        description = "이메일, 비밀번호, 표시 이름으로 계정을 만듭니다. 아이디 로그인이 필요하면 `username`을 함께 등록합니다. 응답에는 로그인 토큰과 계정 정보가 들어 있습니다.")
     @ResponseStatus(CREATED)
     Accounts.Session signup(@Valid @RequestBody Signup input) { return accounts.signup(input); }
 
     @PostMapping("/auth/login")
     @Operation(summary = "로그인 토큰 발급",
-        description = "가입한 이메일과 비밀번호로 로그인합니다. Swagger의 Authorize → BearerAuth에 응답의 `token` 값을 넣으세요.")
+        description = "등록한 `email` 또는 `username` 하나와 비밀번호로 로그인합니다. Swagger의 Authorize → BearerAuth에 응답의 `token` 값을 넣으세요.")
     Accounts.Session login(@Valid @RequestBody Credentials input) { return accounts.login(input); }
 
     @PostMapping("/auth/logout")
@@ -237,15 +278,14 @@ class AuthController {
     Map<String, Object> me(@AuthenticationPrincipal Actor actor) { return accounts.profile(actor.id()); }
 
     @PutMapping("/me/role")
-    @Operation(summary = "가입 후 역할 설정",
-        description = "`FOUNDER`는 `founderBudget`에 원 단위 예산을, `OWNER`는 `businessNumber`에 사업자등록번호를 입력합니다. `STUDENT`는 역할만 입력합니다. 계정당 한 번 설정합니다.")
+    @Operation(summary = "역할 추가 또는 활성 역할 전환",
+        description = "처음 `FOUNDER`를 추가할 때 예산, `OWNER`를 추가할 때 사업자등록번호를 입력합니다. 가진 역할은 역할명만 보내 전환합니다. 응답의 `roles`는 보유 역할, `role`은 활성 역할입니다.")
     Map<String, Object> role(@AuthenticationPrincipal Actor actor, @Valid @RequestBody Onboarding input) {
-        if (actor.role() != null) throw conflict("이미 역할을 선택했습니다.");
-        if ((input.role() == Role.FOUNDER) != (input.founderBudget() != null)) {
+        if (input.role() != Role.FOUNDER && input.founderBudget() != null) {
             throw invalid("예비 창업자 역할에 한해 창업 예산을 입력하세요.");
         }
         String number = optional(input.businessNumber());
-        if ((input.role() == Role.OWNER) != (number != null)) {
+        if (input.role() != Role.OWNER && number != null) {
             throw invalid("기존 사업자 역할에 한해 사업자등록번호를 입력하세요.");
         }
         if (number != null) {
@@ -257,9 +297,10 @@ class AuthController {
         return accounts.profile(actor.id());
     }
 
-    record Credentials(@NotBlank @Email @Size(max = 254) String email,
-        @NotBlank @Size(max = 72) String password) {}
+    private static final String USERNAME = "[a-zA-Z0-9_.-]{3,30}";
+    record Credentials(@Email @Size(max = 254) String email,
+        @Pattern(regexp = USERNAME) String username, @NotBlank @Size(max = 72) String password) {}
     record Signup(@NotBlank @Email @Size(max = 254) String email, @NotBlank @Size(min = 8, max = 72) String password,
-        @NotBlank @Size(max = 100) String displayName) {}
+        @NotBlank @Size(max = 100) String displayName, @Pattern(regexp = USERNAME) String username) {}
     record Onboarding(@NotNull Role role, @PositiveOrZero Long founderBudget, @Size(max = 20) String businessNumber) {}
 }

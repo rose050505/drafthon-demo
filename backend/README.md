@@ -36,6 +36,22 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 
 기본 주소는 `http://127.0.0.1:8080`입니다. `GET /api/health`로 확인합니다. `PORT`, `V2V_BIND_ADDRESS`, `V2V_CORS_ORIGINS`를 지정할 수 있습니다. 배포에서는 `V2V_DB_URL=jdbc:postgresql://호스트:5432/데이터베이스`, `V2V_DB_USER`, `V2V_DB_PASSWORD`를 설정합니다. 공공 API 키 미설정은 `503`, 제공기관 오류는 `502`로 처리합니다.
 
+## 공용 서버 배포
+
+저장소의 `backend/`를 Docker 빌드 컨텍스트로 사용합니다. Render에서는 Docker 웹 서비스의 Root Directory를 `backend`로, Health Check Path를 `/api/health`로 지정합니다. 이미지는 `cloud` 프로필로 시작하고 호스팅 제공자가 지정한 `PORT`를 사용합니다.
+
+| 환경 변수 | 배포 서버에 넣을 값 |
+| --- | --- |
+| `V2V_DB_URL` | PostgreSQL JDBC URL. Supabase의 IPv4 Session pooler를 쓰면 `jdbc:postgresql://실제-풀러-호스트:5432/postgres?sslmode=require` 형식 |
+| `V2V_DB_USER` | DB 연결 화면에 표시된 사용자 이름. Supabase Session pooler 이름은 일반적으로 `postgres.<프로젝트-ref>` |
+| `V2V_DB_PASSWORD` | DB 비밀번호 |
+| `V2V_CORS_ORIGINS` | `https://parkmiyeong.com`. 여러 출처는 쉼표로 구분 |
+| `V2V_BIND_ADDRESS` | `0.0.0.0` (cloud 프로필 기본값) |
+| `V2V_OPERATOR_ACCOUNT_IDS` | 공고 심사 권한을 부여할 가입 계정 UUID. 여러 계정은 쉼표로 구분 |
+| 위 표의 외부 API 키와 V2V 연동 토큰 | 필요한 공개 데이터 API 키, AI 워커 토큰과 운영자 토큰을 배포 서비스의 환경 변수로 입력 |
+
+최초 시작 시 Flyway가 PostgreSQL의 전용 `v2v` 스키마에 테이블을 생성합니다. Supabase에서는 `v2v` 스키마를 Data API 공개 목록에 추가하지 않습니다. 기존 H2 데이터를 옮기는 작업은 별도입니다. 배포된 서버의 `/api/health`가 `UP`이면 같은 주소의 `/swagger-ui.html`을 팀에 공유하고 프론트와 AI 워커에 서버의 기본 URL을 설정합니다.
+
 ## 프론트 API
 
 서버를 실행한 뒤 `http://127.0.0.1:8080/swagger-ui.html`에서 각 API 이름과 설명을 펼쳐 보고 **Try it out**으로 요청을 보낼 수 있습니다. `127.0.0.1`은 브라우저가 열린 PC 자신을 가리킵니다. 같은 서버와 데이터를 사용할 팀원에게는 백엔드를 배포한 주소에 `/swagger-ui.html`을 붙여 공유합니다. OpenAPI JSON은 같은 서버의 `/v3/api-docs`에서 받을 수 있습니다.
@@ -48,23 +64,27 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 
 | 흐름 | 메서드 및 경로 | 주요 입력과 동작 |
 | --- | --- | --- |
-| 회원 | `POST /api/auth/signup`, `POST /api/auth/login` | `email`, `password`. 회원가입에는 `displayName` 추가 |
-| 계정과 역할 | `GET /api/me`, `PUT /api/me/role`, `POST /api/auth/logout` | `role`은 `FOUNDER`, `OWNER`, `STUDENT` 중 하나. 예비 창업자는 `founderBudget`(원), 기존 사업자는 `businessNumber` |
+| 회원 | `POST /api/auth/signup`, `POST /api/auth/login` | 가입에는 `email`, `password`, `displayName`과 선택 `username`. 로그인은 `email` 또는 `username` 하나와 `password` |
+| 계정과 역할 | `GET /api/me`, `PUT /api/me/role`, `POST /api/auth/logout` | `role`은 현재 활성 역할, `roles`는 보유 역할 목록. `FOUNDER`, `OWNER`, `STUDENT`를 추가하거나 전환할 수 있습니다. 역할을 처음 등록할 때 예비 창업자는 `founderBudget`(원), 기존 사업자는 `businessNumber` 필수 |
 | 상가 및 건축물 | `GET /api/catalog/shops`, `GET /api/catalog/building-register` | 상가 조회는 `west,south,east,north`, 페이지는 `page,size`. 상가 응답은 원본 `header`와 `body`. 건축물은 `sigunguCd,bjdongCd,bun,ji`와 선택 `landType,page,size` |
-| 지도·공실 | `GET /api/buildings`, `GET /api/vacancies`, `GET /api/buildings/{id}/vacancies` | 공개 목록. 공실에는 확인 시각, 출처, 임대료·보증금이 포함되며 미제공 가격은 null |
-| 주민 의견 | `GET/POST /api/buildings/{id}/opinions`, `GET /api/buildings/{id}/demand` | 등록은 로그인 후 `desiredBusiness,reason`. 수요 조회는 마지막 완료 결과를 배열로 반환 |
+| 지도·공실 | `GET /api/buildings`, `GET /api/vacancies`, `GET /api/buildings/{id}/vacancies` | `AVAILABLE`, `UNVERIFIED`를 공개하며 `status`, 확인 시각, 출처, 임대료·보증금을 반환합니다. 미제공 가격은 null |
+| 주민 의견 | `GET/POST /api/buildings/{id}/opinions`, `GET /api/buildings/{id}/demand` | 회원은 활성 역할 없이도 `desiredBusiness,reason`과 선택 `category,vacancyId`를 등록할 수 있습니다. 목록은 선택 쿼리 `vacancyId`와 선택 Bearer 인증을 받으며 `likeCount,likedByMe`를 반환합니다. `category` 기본값은 `기타`이고 비로그인 조회의 `likedByMe`는 `false`입니다 |
+| 의견 공감 | `PUT/DELETE /api/buildings/{id}/opinions/{opinionId}/like` | 로그인에 성공한 계정마다 공감을 한 번 추가하거나 취소할 수 있습니다. 현재 `likeCount,likedByMe`를 반환합니다 |
 | 창업 계획 | `GET/POST /api/startup-plans`, `GET /api/startup-plans/{id}` | 생성은 모두 선택인 `businessIdea,preferredBuildingId,preferredAddress`. 건물 ID 또는 주소 중 하나만 입력 |
 | 창업 입지·업종 분석 | `POST /api/startup-plans/{id}/analysis` | 아이템·위치 유무로 작업 유형 결정. 쿼리 `vacancyId`를 넣으면 선택한 공실과 건물로 분석 |
 | 창업안 선택·상담 | `PUT /api/startup-plans/{id}/selection`, `POST /api/startup-plans/{id}/faq`, `POST /api/startup-plans/{id}/chat` | 선택은 `industry`와 `vacancyId`, `buildingId`, `address` 중 하나. 상담은 `message`와 선택 `previousJobId` |
 | 기존 사업자 과제 정리 | `POST /api/owner/task-planning` | `industry,problem,goal`을 받아 과제 우선순위 제안 작업 등록 |
-| 공고 | `POST /api/postings`, `GET /api/me/postings`, `GET /api/me/postings/{id}`, `PUT /api/postings/{id}` | `title,interest,workDescription,deliverable,periodWeeks,stipendKrw,availability`, 선택 `academicCredit`. 예비 창업자는 확정한 `startupPlanId` 필수 |
-| 자동 초안과 승인 | `POST /api/postings/{id}/draft-generation`, `POST /api/postings/{id}/publish` | AI 초안 안내를 검토하고 수정 API로 저장한 뒤 별도 호출로 게시 |
+| 공고 | `POST /api/postings`, `GET /api/me/postings`, `GET /api/me/postings/{id}`, `PUT /api/postings/{id}` | `title,interest,workDescription,deliverable,periodWeeks,stipendKrw,availability`, 선택 `academicCredit,studentLimit,advisorName`. 예비 창업자는 확정한 `startupPlanId` 필수. `studentLimit`은 1~4명, 기본 4명 |
+| 자동 초안과 게시 | `POST /api/postings/{id}/draft-generation`, `POST /api/postings/{id}/publish` | AI 초안을 편집해 승인하고 심사 결과가 `SELECTED`일 때 게시할 수 있습니다 |
+| 공고 심사 요청 | `POST /api/postings/{id}/review` | 작성자가 요청하면 `PENDING`으로 바뀝니다. 예비 창업자는 확정한 창업안의 위치를 쓰고 기존 사업자는 `buildingId,vacancyId`를 선택 입력합니다 |
+| 운영단 심사 | `GET /api/operations/posting-reviews`, `PUT /api/operations/postings/{id}/review` | 운영단 계정에서 `OPERATOR` 역할을 활성화한 후 의견 수와 공감 수를 보고 `status` (`SELECTED` 또는 `NEXT_OPPORTUNITY`), `readinessScore,taskFitScore` (각 0~100), 선택 `notes`를 제출합니다. `NEXT_OPPORTUNITY`일 때 수정 후 재심사 요청이 가능합니다 |
 | 학생 공고 조회 | `GET /api/postings`, `GET /api/postings/{id}` | 로그인 없이 읽기. 목록은 `keyword,interest,limit,offset` 사용 |
 | 학생 추천 | `POST /api/postings/recommendations` | 학생 로그인 후 `interests,availability`로 AI 추천 작업 등록 |
 | 학생 정보 | `GET/PUT /api/students/me` | `university,interests,availability`, 선택 `major,academicYear,advisor,linkedCourse` |
 | 증빙 파일 | `PUT/GET /api/students/me/documents/{type}` | multipart 항목명 `file`, 종류 `ENROLLMENT`, `TRANSCRIPT`, `PORTFOLIO`. 8MB 이하 PDF/JPG/PNG. 다운로드는 본인만 가능 |
 | 학생 지원 | `POST /api/postings/{id}/application-questions`, `POST /api/postings/{id}/applications`, `GET /api/me/applications` | 질문 작업 완료 후 `questionJobId,answers`로 답변 두 개 제출. 재학증명서 등록 필요 |
-| 지원 조회·선택 | `GET /api/postings/{id}/applications`, `POST /api/postings/{id}/applications/{applicationId}/match` | 공고 작성자만 접근. 선택 필터는 `major,academicYear`. 공고당 한 명을 매칭 |
+| 지원 조회·선택 | `GET /api/postings/{id}/applications`, `POST /api/postings/{id}/applications/{applicationId}/match` | 공고 작성자만 접근. 선택 필터는 `major,academicYear`. 모집 인원까지 한 명씩 선택하면 공고가 `MATCHED`로 바뀝니다 |
+| 지도교수 | `PUT /api/postings/{id}/advisor` | 작성자가 공고에 팀 공통 `advisorName`을 입력합니다 |
 | 프로젝트와 경력 카드 | `GET /api/me/matches`, `GET /api/matches/{id}`, `POST /api/matches/{id}/start`, `POST /api/matches/{id}/complete`, `GET /api/students/me/career-cards` | 완료 입력은 `handoverNotes`와 선택 `handoverUrl`(HTTPS). 학생 경력 카드는 완료 건만 반환 |
 
 사업자 상태 조회는 계속사업자 상태를 확인합니다. 계정 본인과 사업자 대표자의 일치 확인이 필요한 경우 국세청 진위확인에 필요한 정보를 추가로 받아야 합니다. 지도교수와 연계 교과는 현재 직접 입력입니다. 대학의 공식 배정, 학점 승인, 외부 알림은 별도 연동 대상입니다.
@@ -75,7 +95,7 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 
 1. `POST /api/integrations/catalog/buildings`에 `buildingKey,roadAddress,longitude,latitude,source`를 보냅니다. `name,mainUse`는 선택입니다.
 2. 임대인, 공인중개사 또는 현장 확인으로 공실이 확인되면 `POST /api/integrations/catalog/buildings/{id}/vacancies`에 `unitLabel,status,source,verifiedAt`을 보냅니다. `areaM2,depositKrw,monthlyRentKrw`는 확인된 값만 입력합니다. 공개 출처에는 확인 경로나 공개 URL을 쓰고 개인 연락처는 입력하지 않습니다.
-3. 임대 진행이나 계약이 확인되면 `PUT /api/integrations/catalog/vacancies/{id}`로 정보를 갱신합니다. 상태는 `UNVERIFIED`, `AVAILABLE`, `IN_NEGOTIATION`, `CLOSED`입니다. 공개 목록과 추천 후보는 `AVAILABLE`만 반환합니다.
+3. 임대 진행이나 계약이 확인되면 `PUT /api/integrations/catalog/vacancies/{id}`로 정보를 갱신합니다. 상태는 `UNVERIFIED`, `AVAILABLE`, `IN_NEGOTIATION`, `CLOSED`입니다. 공개 지도에는 `UNVERIFIED`와 `AVAILABLE`을 표시할 수 있습니다. 입지 추천 후보에는 `AVAILABLE`을 사용합니다.
 4. 게시판 의견을 모은 뒤 `POST /api/integrations/catalog/buildings/{id}/demand-analysis`로 최근 100건을 분석 요청합니다.
 
 상가업소, 건축물대장 조회와 공실 등록은 서로 독립적입니다. 실제 공실 자동 확보는 임대 매물 제공처와의 연동 또는 지역 파트너의 데이터 등록이 필요합니다. 점포별 폐업 원인과 유동·매출 데이터는 현재 연결 범위에 포함되지 않습니다.

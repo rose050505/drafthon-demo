@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: ${V2V_DB_URL}
+    username: ${V2V_DB_USER}
+    password: ${V2V_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      schema: v2v
+      maximum-pool-size: 5
+  flyway:
+    default-schema: v2v
+    schemas: v2v
+server:
+  address: ${V2V_BIND_ADDRESS:0.0.0.0}
+  forward-headers-strategy: framework

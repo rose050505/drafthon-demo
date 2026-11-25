@@ -18,13 +18,21 @@ import org.springframework.web.bind.annotation.*;
 
 @Service
 class Postings {
-    private static final String SELECT = """
+    private static final String FIELDS = """
         select p.id, p.startup_plan_id as "startupPlanId", p.title, p.interest,
                p.work_description as "workDescription", p.deliverable, p.period_weeks as "periodWeeks",
                p.academic_credit as "academicCredit", p.stipend_krw as "stipendKrw", p.availability, p.status,
-               p.published_at as "publishedAt", a.display_name as "ownerName"
-        from postings p join accounts a on a.id = p.owner_id
+               p.published_at as "publishedAt", a.display_name as "ownerName", p.student_limit as "studentLimit",
+               p.advisor_name as "advisorName", p.review_status as "reviewStatus",
+               (select count(*) from posting_team_matches m where m.posting_id = p.id) as "matchedStudentCount"
         """;
+    private static final String FROM = " from postings p join accounts a on a.id = p.owner_id ";
+    private static final String SELECT = FIELDS + FROM;
+    private static final String SELECT_OWNER = FIELDS + """
+        , p.review_notes as "reviewNotes", p.readiness_score as "readinessScore", p.task_fit_score as "taskFitScore",
+          p.review_opinion_count as "reviewOpinionCount", p.review_like_count as "reviewLikeCount",
+          p.reviewed_at as "reviewedAt"
+        """ + FROM;
     private final JdbcTemplate db;
     private final Startup startup;
     private final AiJobs ai;
@@ -44,7 +52,7 @@ class Postings {
     }
 
     List<Map<String, Object>> mine(UUID owner, int limit, int offset) {
-        return db.queryForList(SELECT + " where p.owner_id = ? order by p.created_at desc, p.id limit ? offset ?",
+        return db.queryForList(SELECT_OWNER + " where p.owner_id = ? order by p.created_at desc, p.id limit ? offset ?",
             owner, limit(limit), offset(offset));
     }
 
@@ -55,7 +63,7 @@ class Postings {
     }
 
     Map<String, Object> owned(UUID owner, UUID id) {
-        return first(db.queryForList(SELECT + " where p.id = ? and p.owner_id = ?", id, owner));
+        return first(db.queryForList(SELECT_OWNER + " where p.id = ? and p.owner_id = ?", id, owner));
     }
 
     Map<String, Object> create(Actor actor, PostingController.Posting input) {
@@ -70,10 +78,11 @@ class Postings {
         UUID id = UUID.randomUUID();
         db.update("""
             insert into postings(title, interest, work_description, deliverable, period_weeks, academic_credit, stipend_krw,
-                                 availability, id, owner_id, startup_plan_id, status)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT')
+                                 availability, id, owner_id, startup_plan_id, student_limit, advisor_name, status)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT')
             """, input.title().strip(), input.interest().strip(), input.workDescription().strip(), input.deliverable().strip(),
-            input.periodWeeks(), optional(input.academicCredit()), input.stipendKrw(), input.availability().strip(), id, owner, plan);
+            input.periodWeeks(), optional(input.academicCredit()), input.stipendKrw(), input.availability().strip(), id, owner, plan,
+            input.studentLimit() == null ? 4 : input.studentLimit(), optional(input.advisorName()));
         return owned(owner, id);
     }
 
@@ -84,10 +93,13 @@ class Postings {
         }
         int updated = db.update("""
             update postings set title = ?, interest = ?, work_description = ?, deliverable = ?, period_weeks = ?,
-                academic_credit = ?, stipend_krw = ?, availability = ? where id = ? and owner_id = ? and status = 'DRAFT'
+                academic_credit = ?, stipend_krw = ?, availability = ?,
+                student_limit = coalesce(?, student_limit), advisor_name = coalesce(?, advisor_name)
+            where id = ? and owner_id = ? and status = 'DRAFT' and review_status in ('NOT_SUBMITTED', 'NEXT_OPPORTUNITY')
             """, input.title().strip(), input.interest().strip(), input.workDescription().strip(), input.deliverable().strip(),
-            input.periodWeeks(), optional(input.academicCredit()), input.stipendKrw(), input.availability().strip(), id, owner);
-        if (updated == 0) throw conflict("게시되기 전의 공고만 수정할 수 있습니다.");
+            input.periodWeeks(), optional(input.academicCredit()), input.stipendKrw(), input.availability().strip(),
+            input.studentLimit(), optional(input.advisorName()), id, owner);
+        if (updated == 0) throw conflict("심사 제출 전 또는 다음 기회를 받은 초안만 수정할 수 있습니다.");
         return owned(owner, id);
     }
 
@@ -95,11 +107,19 @@ class Postings {
         owned(owner, id);
         int updated = db.update("""
             update postings set status = 'PUBLISHED', published_at = current_timestamp
-            where id = ? and owner_id = ? and status = 'DRAFT'
+            where id = ? and owner_id = ? and status = 'DRAFT' and review_status = 'SELECTED'
             """, id, owner);
         var posting = owned(owner, id);
-        if (updated == 0 && !"PUBLISHED".equals(posting.get("status"))) throw conflict("이미 모집이 종료된 공고입니다.");
+        if (updated == 0 && !"PUBLISHED".equals(posting.get("status"))) {
+            throw conflict("운영단 심사에서 선정된 초안만 게시할 수 있습니다.");
+        }
         return posting;
+    }
+
+    Map<String, Object> setAdvisor(UUID owner, UUID id, String name) {
+        int updated = db.update("update postings set advisor_name = ? where id = ? and owner_id = ?", name.strip(), id, owner);
+        if (updated == 0) throw missing();
+        return owned(owner, id);
     }
 
     Map<String, Object> draft(UUID owner, UUID id) {
@@ -178,7 +198,7 @@ class PostingController {
 
     @PutMapping("/postings/{id}")
     @Operation(summary = "게시 전 공고 수정",
-        description = "작성자가 초안 상태에서 업무, 결과물, 활동 조건과 안내 문구를 수정합니다. `startupPlanId`는 기존 공고와 같은 값으로 보냅니다.")
+        description = "심사 제출 전 또는 다음 기회를 받은 초안의 업무, 결과물과 활동 조건을 수정합니다. `studentLimit`은 1~4명입니다.")
     Map<String, Object> edit(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @Valid @RequestBody Posting input) {
         return postings.edit(actor.require(Role.FOUNDER, Role.OWNER), id, input);
     }
@@ -193,9 +213,16 @@ class PostingController {
 
     @PostMapping("/postings/{id}/publish")
     @Operation(summary = "공고 게시",
-        description = "작성자가 검토를 마친 초안을 학생에게 공개합니다. 게시되면공개 공고 목록에 표시되고 지원을 받을 수 있습니다.")
+        description = "운영단 심사에서 선정된 초안을 학생에게 공개합니다. 게시된 공고는 공개 목록에 표시됩니다.")
     Map<String, Object> publish(@AuthenticationPrincipal Actor actor, @PathVariable UUID id) {
         return postings.publish(actor.require(Role.FOUNDER, Role.OWNER), id);
+    }
+
+    @PutMapping("/postings/{id}/advisor")
+    @Operation(summary = "프로젝트 지도교수 지정",
+        description = "공고 작성자가 지도교수 이름을 등록합니다. 이 공고의 모든 학생 매칭에서 같은 지도교수가 표시됩니다.")
+    Map<String, Object> advisor(@AuthenticationPrincipal Actor actor, @PathVariable UUID id, @Valid @RequestBody Advisor input) {
+        return postings.setAdvisor(actor.require(Role.FOUNDER, Role.OWNER), id, input.advisorName());
     }
 
     @PostMapping("/postings/recommendations")
@@ -217,8 +244,10 @@ class PostingController {
     record Posting(UUID startupPlanId, @NotBlank @Size(max = 180) String title, @NotBlank @Size(max = 100) String interest,
         @NotBlank @Size(max = 6000) String workDescription, @NotBlank @Size(max = 1500) String deliverable,
         @NotNull @Min(1) @Max(52) Integer periodWeeks, @Size(max = 150) String academicCredit,
-        @NotNull @PositiveOrZero Long stipendKrw, @NotBlank @Size(max = 1000) String availability) {}
+        @NotNull @PositiveOrZero Long stipendKrw, @NotBlank @Size(max = 1000) String availability,
+        @Min(1) @Max(4) Integer studentLimit, @Size(max = 120) String advisorName) {}
 
+    record Advisor(@NotBlank @Size(max = 120) String advisorName) {}
     record Recommendation(@NotBlank @Size(max = 500) String interests, @NotBlank @Size(max = 1000) String availability) {}
     record OwnerBrief(@NotBlank @Size(max = 160) String industry, @NotBlank @Size(max = 3000) String problem,
         @NotBlank @Size(max = 2000) String goal) {}

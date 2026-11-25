@@ -32,3 +32,4 @@ v2v:
   sgis-secret-key: ${V2V_SGIS_SECRET_KEY:}
   catalog-token: ${V2V_CATALOG_ADMIN_TOKEN:}
   ai-token: ${V2V_AI_WORKER_TOKEN:}
+  operator-account-ids: ${V2V_OPERATOR_ACCOUNT_IDS:}
