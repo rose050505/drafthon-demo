@@ -64,7 +64,7 @@ class SecurityConfig {
             .cors(cors -> cors.configurationSource(request -> {
                 CorsConfiguration policy = new CorsConfiguration();
                 policy.setAllowedOrigins(config.corsOrigins() == null ? List.of() : config.corsOrigins());
-                policy.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+                policy.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                 policy.setAllowedHeaders(List.of("Authorization", "Content-Type"));
                 return policy;
             }))
@@ -77,6 +77,7 @@ class SecurityConfig {
                 .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/catalog/**", "/api/buildings",
                     "/api/buildings/*/vacancies", "/api/buildings/*/opinions", "/api/buildings/*/demand",
                     "/api/vacancies", "/api/postings", "/api/postings/*",
+                    "/api/wishes/*/answers", "/api/answers/*/reviews",
                     "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml").permitAll()
                 .anyRequest().authenticated())
             .addFilterBefore(new OncePerRequestFilter() {

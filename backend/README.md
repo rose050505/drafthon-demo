@@ -89,6 +89,39 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 
 사업자 상태 조회는 계속사업자 상태를 확인합니다. 계정 본인과 사업자 대표자의 일치 확인이 필요한 경우 국세청 진위확인에 필요한 정보를 추가로 받아야 합니다. 지도교수와 연계 교과는 현재 직접 입력입니다. 대학의 공식 배정, 학점 승인, 외부 알림은 별도 연동 대상입니다.
 
+## 가게·주민 요청·판매 기록
+
+여기서는 가게 설정과 운영 기록을 개별 API로 제공합니다. 기존 사업자는 로그인하고 활성 역할을 `OWNER`로 설정합니다. `wishId`에는 기존 `GET /api/buildings/{id}/opinions`에서 받은 의견 ID를 사용합니다. 도입 전에 만들어진 계정과 의견도 그대로 사용할 수 있습니다.
+
+| 용도 | 메서드 및 경로 | 입력과 결과 |
+| --- | --- | --- |
+| 내 가게 | `GET/PUT /api/stores/me`, `PUT /api/stores/{id}` | `name,category,latitude,longitude`, 선택 `roadAddress,firstVisitBenefit,offerDetails,menus`. 메뉴는 `name`과 선택 `priceKrw,id` |
+| 주변 요청 | `GET /api/stores/{id}/nearby-wishes` | 150m 안 요청을 업종과 공감 기준으로 정렬합니다. 해당 요청이 없으면 300m 안에서 가까운 세 건을 반환합니다 |
+| AI 요청 묶기·답변 초안 | `POST /api/stores/{id}/themes`, `POST /api/stores/{id}/answer-draft` | 답변 초안 요청에 `wishId` 입력. 결과는 `GET /api/ai-jobs/{id}` |
+| 가게 답변 | `GET/POST /api/wishes/{id}/answers`, `GET /api/stores/{id}/answers`, `PATCH /api/answers/{id}` | 등록에 `storeId,message`와 `menuId` 또는 `menuName`. 수정에 `message` 또는 `status` (`PREPARING`, `SELLING`, `ENDED`) |
+| 알림·방문·신고 | `GET /api/me/alerts`, `PUT /api/me/alerts/{id}/read`, `GET/PUT /api/me/alerts/preferences`, `GET /api/answers/{id}/show`, `POST /api/answers/{id}/went`, `POST /api/answers/{id}/report` | 수신 설정은 `enabled`, 신고는 `reason`. 사이트 안에 알림을 생성하고 방문 표시는 계정당 한 번 집계합니다 |
+| 신고 처리 | `GET /api/operations/answer-reports`, `PUT /api/operations/answers/{id}/visibility` | 운영단 로그인 후 `hidden`으로 공개 상태 변경 |
+| 판매 기록 | `PUT /api/stores/{id}/menus/{menuId}/days/{date}`, `POST /api/answers/{id}/days`, `GET /api/stores/{id}/sales` | `soldQuantity,soldOut`, 선택 `salesKrw`. 답변으로 기록할 때 `date`와 선택 `shownVisits`. 목록은 `from,to` |
+| 재고·메뉴별 사용량 | `GET/POST /api/stores/{id}/ingredients`, `PUT /api/stores/{id}/ingredients/{ingredientId}/stock`, `GET /api/stores/{id}/menus/{menuId}/ingredients`, `PUT /api/stores/{id}/menus/{menuId}/ingredients/{ingredientId}` | 재료는 `name,unit,onHand,packQuantity,leadDays`. 메뉴 한 건당 `quantityPerSale` 입력 |
+| 발주·준비량 | `GET/POST /api/stores/{id}/orders`, `PUT /api/stores/{id}/orders/{orderId}/status`, `GET /api/stores/{id}/stock-recommendations` | 발주는 `ingredientId,quantity,arrivesOn`. 상태는 `RECEIVED` 또는 `CANCELLED`. 권장량은 최근 7일의 실제 기록, 현재 보유량, 도착 예정량과 발주 묶음 단위를 반영합니다 |
+| 이용 후기 | `GET /api/answers/{id}/reviews`, `PUT /api/answers/{id}/reviews/me`, `POST /api/stores/{id}/review-analysis` | 방문을 표시한 이용자가 `rating,comment` 입력. 특정 답변 분석에는 `answerId` 쿼리 사용 |
+| 개업 후 운영 확인 | `GET/PUT /api/stores/{id}/follow-ups/{month}`, `GET/PUT /api/stores/{id}/sharing`, `GET /api/track?term=YYYY-MM` | 월 형식은 `YYYY-MM`. 영업 상태는 `OPERATING,PAUSED,CLOSED`. 공유 설정은 `shareStatus,shareSales,shareVisits`. 운영단에게 동의한 항목과 매출 구간만 제공 |
+| 분기별 상권 변화 | `GET /api/stores/{id}/area-change?q=YYYY-Qn` | 등록된 직전 분기와 비교한 반경 100m 업소 변화. 필요한 두 분기 파일이 없으면 `INSUFFICIENT_DATA` |
+
+정확한 금액은 월별 본인 조회로 확인할 수 있습니다. 판매 기록이 재료별 관련 메뉴에 각각 3일 이상 쌓이면 수량을 제안합니다. `INSUFFICIENT_DATA`는 기록이 부족하고 `NO_RECIPE`는 메뉴 사용량 연결이 없는 경우입니다. 매출 구간 값은 `UNDER_1M`, `FROM_1M_TO_3M`, `FROM_3M_TO_5M`, `FROM_5M_TO_10M`, `FROM_10M`입니다.
+
+### 소진공 분기 자료 등록
+
+[소진공 상가정보 원본 CSV](https://www.data.go.kr/data/15083033/fileData.do)의 대구 파일을 받아 같은 범위로 변환합니다. 아래 명령은 대구 중구만 추립니다.
+
+```powershell
+python .\tools\prepare_shop_quarter.py .\semas-daegu-202606.csv .\shops-2026-Q2.json
+$headers = @{ 'X-V2V-Catalog-Token' = $env:V2V_CATALOG_ADMIN_TOKEN }
+Invoke-RestMethod -Method Put -Uri 'http://127.0.0.1:8080/api/integrations/catalog/quarterly-shops/2026-Q2' -Headers $headers -ContentType 'application/json; charset=utf-8' -InFile .\shops-2026-Q2.json
+```
+
+다음 분기에도 같은 방식으로 등록합니다. 분기 파일에서 빠진 업소는 해당 반경 목록에서 확인되지 않은 업소로 표시합니다. 신규 공실은 플랫폼에 해당 분기 중 등록된 건으로 집계합니다.
+
 ## 실제 공실 등록
 
 운영자 작업에는 `X-V2V-Catalog-Token`이 필요합니다.
@@ -116,5 +149,8 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 | `OWNER_TASK_PLANNING` | `priorities`, `questions` |
 | `POSTING_DRAFT` | 편집 화면에 붙일 `title`, `workDescription`, `deliverable` |
 | `POSTING_RECOMMENDATIONS` | `recommendations`에 공고 ID와 추천 근거 |
+| `STORE_WISH_THEMES` | `themes`에 자주 나온 요청과 근거 요청 ID |
+| `STORE_ANSWER_DRAFT` | `fit`, `menuName`, `message`에 가게 적합 여부와 사장님 답변 초안 |
+| `STORE_REVIEW_ANALYSIS` | `themes`, `suggestions`에 후기에서 반복된 내용과 개선 제안 |
 
 테스트는 별도 메모리 DB를 사용합니다. 실서비스를 처음 시작하면 데이터는 비어 있으며 공실, 공고, 지원서는 실제 입력부터 표시됩니다.
