@@ -32,4 +32,8 @@ v2v:
   sgis-secret-key: ${V2V_SGIS_SECRET_KEY:}
   catalog-token: ${V2V_CATALOG_ADMIN_TOKEN:}
   ai-token: ${V2V_AI_WORKER_TOKEN:}
+  startup-risk:
+    enabled: ${V2V_STARTUP_RISK_ENABLED:false}
+    python: ${V2V_STARTUP_RISK_PYTHON:python3}
+    script: ${V2V_STARTUP_RISK_SCRIPT:market-risk/v2v_startup_risk.py}
   operator-account-ids: ${V2V_OPERATOR_ACCOUNT_IDS:}
