@@ -112,6 +112,29 @@ class WorkflowTest {
     }
 
     @Test
+    void swaggerShowsEndpointsAndTheirAuthentication() throws Exception {
+        run(get("/swagger-ui.html"), 302);
+        run(get("/swagger-ui/index.html"), 200);
+        run(get("/swagger-ui/swagger-ui-bundle.js"), 200);
+        run(get("/v3/api-docs/swagger-config"), 200);
+
+        var docs = tree(run(get("/v3/api-docs"), 200));
+        var schemes = docs.path("components").path("securitySchemes");
+        assertEquals("bearer", schemes.path("BearerAuth").path("scheme").asText());
+        assertEquals("X-V2V-AI-Token", schemes.path("X-V2V-AI-Token").path("name").asText());
+        assertEquals("X-V2V-Catalog-Token", schemes.path("X-V2V-Catalog-Token").path("name").asText());
+        assertFalse(docs.path("paths").path("/api/health").path("get").has("security"));
+        var analysis = docs.path("paths").path("/api/startup-plans/{id}/analysis").path("post");
+        assertTrue(analysis.path("security").path(0).has("BearerAuth"));
+        var worker = docs.path("paths").path("/api/integrations/ai/jobs/claim").path("post");
+        assertTrue(worker.path("security").path(0).has("X-V2V-AI-Token"));
+        var catalog = docs.path("paths").path("/api/integrations/catalog/buildings").path("post");
+        assertTrue(catalog.path("security").path(0).has("X-V2V-Catalog-Token"));
+        run(post("/api/integrations/ai/jobs/claim"), 401);
+        run(get("/api/me"), 401);
+    }
+
+    @Test
     void upstreamKeysAreRequiredForPublicDataAndOwnerActivation() throws Exception {
         run(get("/api/catalog/shops").param("west", "128.59").param("east", "128.60").param("south", "35.86")
             .param("north", "35.88"), 503);
