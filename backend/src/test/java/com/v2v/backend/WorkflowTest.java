@@ -31,7 +31,8 @@ import tools.jackson.databind.json.JsonMapper;
     "v2v.catalog-token=workflow-catalog-test",
     "v2v.nts-key=", "v2v.semas-key=", "v2v.building-key=", "v2v.kakao-key=",
     "v2v.sgis-service-id=", "v2v.sgis-secret-key=",
-    "v2v.operator-account-ids=00000000-0000-4000-8000-000000000001"
+    "v2v.operator-account-ids=00000000-0000-4000-8000-000000000001",
+    "v2v.demo-owner-account-id=00000000-0000-4000-8000-000000000002"
 })
 class WorkflowTest {
     @Autowired WebApplicationContext context;
@@ -389,6 +390,38 @@ class WorkflowTest {
         assertTrue(catalog.path("security").path(0).has("X-V2V-Catalog-Token"));
         run(post("/api/integrations/ai/jobs/claim"), 401);
         run(get("/api/me"), 401);
+    }
+
+    @Test
+    void onlyTheConfiguredDemoAccountCanAccessStoresWithoutBusinessVerification() throws Exception {
+        UUID demoId = UUID.fromString("00000000-0000-4000-8000-000000000002");
+        String password = "integration-only-password";
+        String hash = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode(password);
+        db.update("insert into accounts(id, email, password_hash, display_name, username) values (?, ?, ?, ?, ?)",
+            demoId, "demo-owner@example.test", hash, "가게 시연 계정", "owner-demo");
+        var login = tree(run(body(post("/api/auth/login"), Map.of("username", "owner-demo", "password", password)), 200));
+        var account = login.path("account");
+        assertEquals("OWNER", field(account, "role"));
+        assertTrue(account.path("demoOwner").asBoolean());
+        assertTrue(account.path("businessStatusCheckedAt").isNull());
+        assertTrue(account.path("businessNumber").isNull());
+        String owner = field(login, "token");
+        run(body(bearer(put("/api/me/role"), owner), Map.of("role", "STUDENT")), 200);
+        run(bearer(get("/api/stores/me"), owner), 403);
+        run(body(bearer(put("/api/me/role"), owner), Map.of("role", "OWNER")), 200);
+        var store = Map.of("name", "시연 테스트 가게", "category", "카페", "longitude", 128.6, "latitude", 35.87);
+        run(body(bearer(put("/api/stores/me"), owner), store), 200);
+        assertEquals("시연 테스트 가게", field(tree(run(bearer(get("/api/stores/me"), owner), 200)), "name"));
+        assertEquals(0, db.queryForObject("select count(*) from account_roles where account_id = ? and role = 'OWNER'",
+            Integer.class, demoId));
+
+        var stale = signup("expired-demo-owner");
+        UUID staleId = UUID.fromString(field(stale.path("account"), "id"));
+        String expiredToken = field(stale, "token");
+        db.update("update accounts set active_role = 'OWNER' where id = ?", staleId);
+        assertTrue(tree(run(bearer(get("/api/me"), expiredToken), 200)).path("role").isNull());
+        run(body(bearer(put("/api/stores/me"), expiredToken), store), 403);
+        run(body(bearer(put("/api/me/role"), expiredToken), Map.of("role", "OWNER")), 400);
     }
 
     @Test
