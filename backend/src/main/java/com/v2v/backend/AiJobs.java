@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -31,12 +30,10 @@ enum JobKind {
 class AiJobs {
     private final JdbcTemplate db;
     private final JsonMapper json;
-    private final boolean internalStartupRisk;
 
-    AiJobs(JdbcTemplate db, JsonMapper json, @Value("${v2v.startup-risk.enabled:false}") boolean internalStartupRisk) {
+    AiJobs(JdbcTemplate db, JsonMapper json) {
         this.db = db;
         this.json = json;
-        this.internalStartupRisk = internalStartupRisk;
     }
 
     Map<String, Object> queue(UUID actor, JobKind kind, UUID scope, Object input) {
@@ -64,20 +61,11 @@ class AiJobs {
 
     @Transactional
     Map<String, Object> claim() {
-        return claim(internalStartupRisk ? "and kind <> 'STARTUP_RISK'" : "");
-    }
-
-    @Transactional
-    Map<String, Object> claimStartupRisk() {
-        return claim("and kind = 'STARTUP_RISK'");
-    }
-
-    private Map<String, Object> claim(String kindCondition) {
         var candidates = db.queryForList("""
-            select id from ai_jobs where (status = 'QUEUED'
-                or (status = 'RUNNING' and lease_expires_at <= current_timestamp)) %s
+            select id from ai_jobs where status = 'QUEUED'
+                or (status = 'RUNNING' and lease_expires_at <= current_timestamp)
             order by created_at, id limit 25
-            """.formatted(kindCondition), UUID.class);
+            """, UUID.class);
         for (UUID id : candidates) {
             UUID lease = UUID.randomUUID();
             int count = db.update("""
@@ -169,7 +157,7 @@ class AiController {
 
     @PostMapping("/integrations/ai/jobs/claim")
     @Operation(summary = "AI 워커가 대기 작업 가져오기",
-        description = "AI 워커 토큰으로 대기 중인 작업 하나를 가져옵니다. 작업 종류, 입력 데이터, `leaseId`와 만료 시각을 반환합니다. 처리할 작업이 없으면 HTTP 204입니다. 내장 위험 분석이 활성화된 서버에서는 STARTUP_RISK를 내부에서 처리합니다.")
+        description = "AI 워커 토큰으로 대기 중인 작업 하나를 가져옵니다. 작업 종류, 입력 데이터, `leaseId`와 만료 시각을 반환합니다. 처리할 작업이 없으면 HTTP 204입니다.")
     ResponseEntity<Map<String, Object>> claim(@RequestHeader(name = "X-V2V-AI-Token", required = false) String token) {
         integrationToken(config.aiToken(), token);
         var job = jobs.claim();

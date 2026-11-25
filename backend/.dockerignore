@@ -7,4 +7,3 @@ build/
 data/
 out/
 *.iml
-**/__pycache__/
