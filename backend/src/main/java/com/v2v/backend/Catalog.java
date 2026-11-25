@@ -65,6 +65,7 @@ class Catalog {
             select o.id, o.desired_business as "desiredBusiness", o.category, o.reason, o.created_at as "createdAt",
                 o.vacancy_id as "vacancyId",
                 (select count(*) from building_opinion_likes l where l.opinion_id = o.id) as "likeCount",
+                (select count(*) from resident_request_answers a where a.opinion_id = o.id and not a.hidden) as "answerCount",
                 exists (select 1 from building_opinion_likes l where l.opinion_id = o.id and l.account_id = ?) as "likedByMe"
             from building_opinions o
             where o.building_id = ? and (? = false or o.vacancy_id = ?)
@@ -204,7 +205,7 @@ class CatalogController {
 
     @GetMapping("/buildings/{id}/opinions")
     @Operation(summary = "건물별 주민 의견 조회",
-        description = "건물에 등록된 의견과 `category`, `likeCount`, `likedByMe`를 조회합니다. 특정 공실만 보려면 `vacancyId`를 지정합니다. 익명 조회에서는 `likedByMe`가 false입니다.")
+        description = "건물에 등록된 의견과 업종, 공감 수, 본인 공감 여부, 공개 답변 수를 조회합니다. 특정 공실만 보려면 vacancyId를 지정합니다.")
     List<Map<String, Object>> opinions(@PathVariable UUID id, @RequestParam(defaultValue = "30") int limit,
         @RequestParam(defaultValue = "0") int offset, @RequestParam(required = false) UUID vacancyId,
         @AuthenticationPrincipal @Nullable Actor actor) {

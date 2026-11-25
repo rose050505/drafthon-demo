@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.nio.charset.StandardCharsets;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -187,12 +188,172 @@ class WorkflowTest {
     private String operator() throws Exception {
         String password = "integration-only-password";
         String hash = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode(password);
-        db.update("insert into accounts(id, email, password_hash, display_name) values (?, ?, ?, ?)",
+        db.update("insert into accounts(id, email, password_hash, display_name) values (?, ?, ?, ?) on conflict do nothing",
             UUID.fromString("00000000-0000-4000-8000-000000000001"), "operator@example.test", hash, "operator");
         String token = field(tree(run(body(post("/api/auth/login"),
             Map.of("email", "operator@example.test", "password", password)), 200)), "token");
         run(body(bearer(put("/api/me/role"), token), Map.of("role", "OPERATOR")), 200);
         return token;
+    }
+
+    @Test
+    void storeRespondsToResidentsTracksSalesAndSharesOnlyConsentedMonthlyData() throws Exception {
+        var storeOwner = storeOwner("store-owner");
+        var outsider = storeOwner("store-outsider");
+        var resident = member("store-resident");
+        var supporter = member("store-supporter");
+        var muted = member("store-muted");
+        var week = StoreSales.today();
+        String month = YearMonth.from(week).toString();
+        var profile = tree(run(body(bearer(put("/api/stores/me"), storeOwner), Map.of("name", "테스트 가게", "category", "카페",
+            "latitude", 35.8710, "longitude", 128.6000, "firstVisitBenefit", "첫 방문 안내",
+            "menus", List.of(Map.of("name", "새 메뉴", "priceKrw", 8_000)))), 200));
+        String store = field(profile, "id");
+        String menu = field(profile.path("menus").path(0), "id");
+        run(bearer(get("/api/stores/{id}/nearby-wishes", store), outsider), 404);
+        run(bearer(get("/api/stores/{id}/sales", store).param("from", week.toString()).param("to", week.toString()), outsider), 404);
+        String outside = building("shop-test-far", 35.8731);
+        String farther = opinion(outside, resident);
+        assertEquals(farther, field(tree(run(bearer(get("/api/stores/{id}/nearby-wishes", store), storeOwner), 200)).path(0), "id"));
+        String near = building("shop-test-near", 35.8714);
+        String wish = opinion(near, resident);
+        run(bearer(put("/api/buildings/{id}/opinions/{opinionId}/like", near, wish), supporter), 200);
+        run(bearer(put("/api/buildings/{id}/opinions/{opinionId}/like", near, wish), muted), 200);
+        run(body(bearer(put("/api/me/alerts/preferences"), muted), Map.of("enabled", false)), 204);
+        var nearby = tree(run(bearer(get("/api/stores/{id}/nearby-wishes", store), storeOwner), 200));
+        assertEquals(1, nearby.size());
+        assertEquals(wish, field(nearby.path(0), "id"));
+        run(body(bearer(post("/api/stores/{id}/answer-draft", store), storeOwner), Map.of("wishId", wish)), 202);
+        var draft = claim("STORE_ANSWER_DRAFT");
+        assertEquals(wish, field(draft.path("input").path("request"), "id"));
+        finish(draft, Map.of("message", "판매를 준비하겠습니다"));
+        var response = Map.of("storeId", store, "menuId", menu, "message", "판매를 준비하겠습니다");
+        String answer = field(tree(run(body(bearer(post("/api/wishes/{id}/answers", wish), storeOwner), response), 201)), "id");
+        run(body(bearer(post("/api/wishes/{id}/answers", wish), storeOwner), response), 409);
+        run(get("/api/wishes/{id}/answers", wish), 200);
+        assertEquals(1, tree(run(get("/api/buildings/{id}/opinions", near), 200)).path(0).path("answerCount").asInt());
+        run(bearer(post("/api/answers/{id}/went", answer), resident), 409);
+        assertEquals(1, tree(run(bearer(get("/api/me/alerts"), resident), 200)).size());
+        assertEquals(1, tree(run(bearer(get("/api/me/alerts"), supporter), 200)).size());
+        assertTrue(tree(run(bearer(get("/api/me/alerts"), muted), 200)).isEmpty());
+        run(bearer(get("/api/answers/{id}/show", answer), muted), 404);
+        run(bearer(get("/api/answers/{id}/show", answer), supporter), 200);
+        run(body(bearer(patch("/api/answers/{id}", answer), outsider), Map.of("status", "SELLING")), 404);
+        run(body(bearer(patch("/api/answers/{id}", answer), storeOwner), Map.of("status", "SELLING")), 200);
+        run(body(bearer(put("/api/answers/{id}/reviews/me", answer), supporter), Map.of("rating", 4, "comment", "후기")), 403);
+        run(bearer(post("/api/answers/{id}/went", answer), resident), 200);
+        assertEquals(1, tree(run(bearer(post("/api/answers/{id}/went", answer), resident), 200)).path("visitCount").asInt());
+        run(body(bearer(put("/api/answers/{id}/reviews/me", answer), resident), Map.of("rating", 4, "comment", "이용 후기")), 200);
+        var reviews = tree(run(get("/api/answers/{id}/reviews", answer), 200));
+        assertEquals(1, reviews.size());
+        assertFalse(reviews.path(0).has("accountId"));
+        run(bearer(post("/api/stores/{id}/review-analysis", store), storeOwner), 202);
+        var reviewAnalysis = claim("STORE_REVIEW_ANALYSIS");
+        assertEquals("이용 후기", field(reviewAnalysis.path("input").path("reviews").path(0), "comment"));
+        finish(reviewAnalysis, Map.of("themes", List.of("이용 후기")));
+
+        String ingredient = field(tree(run(body(bearer(post("/api/stores/{id}/ingredients", store), storeOwner),
+            Map.of("name", "재료", "unit", "g", "onHand", 50, "packQuantity", 100, "leadDays", 1)), 201)), "id");
+        run(body(bearer(put("/api/stores/{id}/menus/{menuId}/ingredients/{ingredientId}", store, menu, ingredient), storeOwner),
+            Map.of("quantityPerSale", 10)), 204);
+        assertEquals("INSUFFICIENT_DATA", field(tree(run(bearer(get("/api/stores/{id}/stock-recommendations", store), storeOwner), 200)).path(0), "status"));
+        for (int day = 1; day <= 3; day++) {
+            run(body(bearer(put("/api/stores/{id}/menus/{menuId}/days/{date}", store, menu, week.minusDays(day)), storeOwner),
+                Map.of("soldQuantity", 10, "soldOut", day == 1)), 200);
+        }
+        var forecast = tree(run(bearer(get("/api/stores/{id}/stock-recommendations", store), storeOwner), 200)).path(0);
+        assertEquals(110, forecast.path("tomorrowRequired").asInt());
+        assertEquals(200, forecast.path("recommendedOrderQuantity").asInt());
+        assertTrue(forecast.path("soldOutInReferencePeriod").asBoolean());
+        String order = field(tree(run(body(bearer(post("/api/stores/{id}/orders", store), storeOwner),
+            Map.of("ingredientId", ingredient, "quantity", 100, "arrivesOn", week.plusDays(1).toString())), 201)), "id");
+        assertEquals(100, tree(run(bearer(get("/api/stores/{id}/stock-recommendations", store), storeOwner), 200)).path(0)
+            .path("recommendedOrderQuantity").asInt());
+        for (int retry = 0; retry < 2; retry++) {
+            run(body(bearer(put("/api/stores/{id}/orders/{orderId}/status", store, order), storeOwner), Map.of("status", "RECEIVED")), 200);
+        }
+        assertEquals(150, tree(run(bearer(get("/api/stores/{id}/ingredients", store), storeOwner), 200)).path(0).path("onHand").asInt());
+
+        run(body(bearer(post("/api/answers/{id}/days", answer), storeOwner),
+            Map.of("date", week.toString(), "soldQuantity", 6, "salesKrw", 48000, "soldOut", false, "shownVisits", 2)), 200);
+        var followUp = tree(run(body(bearer(put("/api/stores/{id}/follow-ups/{month}", store, month), storeOwner),
+            Map.of("businessStatus", "OPERATING", "salesBand", "UNDER_1M")), 200));
+        assertEquals(2, followUp.path("visits").path("shownVisits").asInt());
+        assertEquals(1, followUp.path("visits").path("uniqueSelfReportedVisitors").asInt());
+        assertEquals(48000, followUp.path("sales").path("salesKrw").asInt());
+        run(body(bearer(put("/api/stores/{id}/sharing", store), storeOwner),
+            Map.of("shareStatus", true, "shareSales", false, "shareVisits", true)), 204);
+        run(bearer(get("/api/track").param("term", month), outsider), 403);
+        String operatorToken = operator();
+        var tracked = tree(run(bearer(get("/api/track").param("term", month), operatorToken), 200)).path(0);
+        assertEquals("OPERATING", field(tracked, "businessStatus"));
+        assertTrue(tracked.path("soldQuantity").isNull());
+        assertFalse(tracked.has("salesKrw"));
+        assertEquals(2, tracked.path("shownVisits").asInt());
+        run(body(bearer(post("/api/answers/{id}/report", answer), supporter), Map.of("reason", "확인이 필요한 답변")), 204);
+        assertEquals(answer, field(tree(run(bearer(get("/api/operations/answer-reports"), operatorToken), 200)).path(0), "answerId"));
+        run(body(bearer(put("/api/operations/answers/{id}/visibility", answer), operatorToken), Map.of("hidden", true)), 204);
+        assertTrue(tree(run(get("/api/wishes/{id}/answers", wish), 200)).isEmpty());
+        run(get("/api/answers/{id}/reviews", answer), 404);
+    }
+
+    @Test
+    void comparesConsecutiveQuarterSnapshotsWithoutCallingAChangedShopIdAClosure() throws Exception {
+        String owner = storeOwner("quarter-owner");
+        String store = field(tree(run(body(bearer(put("/api/stores/me"), owner), Map.of("name", "분기 비교 가게",
+            "category", "카페", "latitude", 35.8700, "longitude", 128.5940)), 200)), "id");
+        assertEquals("INSUFFICIENT_DATA", field(tree(run(bearer(get("/api/stores/{id}/area-change", store), owner), 200)), "status"));
+        var stable = Map.of("shopKey", "before-stable", "name", "카페", "category", "카페", "buildingKey", "same-building",
+            "latitude", 35.8701, "longitude", 128.5940);
+        var changedId = Map.of("shopKey", "after-stable", "name", "카 페", "category", "카페", "buildingKey", "same-building",
+            "latitude", 35.8701, "longitude", 128.5940);
+        var gone = Map.of("shopKey", "gone", "name", "이전 업소", "category", "카페", "latitude", 35.8699, "longitude", 128.5940);
+        var added = Map.of("shopKey", "new", "name", "다음 업소", "category", "식당", "latitude", 35.8702, "longitude", 128.5940);
+        for (var quarter : List.of("2026-Q2", "2026-Q3")) {
+            var data = quarter.endsWith("2") ? List.of(stable, gone) : List.of(changedId, added);
+            var body = Map.of("source", "테스트 자료", "coverage", "동성로", "shops", data);
+            run(body(put("/api/integrations/catalog/quarterly-shops/{quarter}", quarter), body), 401);
+            run(body(catalog(put("/api/integrations/catalog/quarterly-shops/{quarter}", quarter)), body), 201);
+            run(body(catalog(put("/api/integrations/catalog/quarterly-shops/{quarter}", quarter)), body), 409);
+        }
+        var comparison = tree(run(bearer(get("/api/stores/{id}/area-change", store).param("q", "2026-Q3"), owner), 200));
+        assertEquals("AVAILABLE", field(comparison, "status"));
+        assertEquals(2, comparison.path("previousSameCategoryCount").asInt());
+        assertEquals(1, comparison.path("currentSameCategoryCount").asInt());
+        assertEquals(1, comparison.path("newShops").size());
+        assertEquals("new", field(comparison.path("newShops").path(0), "shopKey"));
+        assertEquals(1, comparison.path("disappearedShops").size());
+        assertEquals("gone", field(comparison.path("disappearedShops").path(0), "shopKey"));
+    }
+
+    private String member(String name) throws Exception {
+        return field(signup(name), "token");
+    }
+
+    private String storeOwner(String name) throws Exception {
+        var account = signup(name);
+        UUID id = UUID.fromString(field(account.path("account"), "id"));
+        db.update("""
+            update accounts set active_role = 'OWNER', business_number = '1234567890',
+                business_status_checked_at = current_timestamp where id = ?
+            """, id);
+        db.update("insert into account_roles(account_id, role) values (?, 'OWNER')", id);
+        return field(account, "token");
+    }
+
+    private JsonNode signup(String name) throws Exception {
+        return tree(run(body(post("/api/auth/signup"), Map.of("email", name + "@example.test",
+            "displayName", name, "password", "integration-only-password")), 201));
+    }
+
+    private String building(String key, double latitude) throws Exception {
+        return field(tree(run(body(catalog(post("/api/integrations/catalog/buildings")), Map.of("buildingKey", key,
+            "roadAddress", "Test-only address", "longitude", 128.6000, "latitude", latitude, "source", "Test only")), 201)), "id");
+    }
+
+    private String opinion(String building, String resident) throws Exception {
+        return field(tree(run(body(bearer(post("/api/buildings/{id}/opinions", building), resident),
+            Map.of("desiredBusiness", "카페", "reason", "동네 요청", "category", "카페")), 201)), "id");
     }
 
     @Test
