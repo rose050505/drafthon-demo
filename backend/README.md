@@ -36,6 +36,20 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 
 기본 주소는 `http://127.0.0.1:8080`입니다. `GET /api/health`로 확인합니다. `PORT`, `V2V_BIND_ADDRESS`, `V2V_CORS_ORIGINS`를 지정할 수 있습니다. 배포에서는 `V2V_DB_URL=jdbc:postgresql://호스트:5432/데이터베이스`, `V2V_DB_USER`, `V2V_DB_PASSWORD`를 설정합니다. 공공 API 키 미설정은 `503`, 제공기관 오류는 `502`로 처리합니다.
 
+## 공용 서버 배포
+
+저장소의 `backend/`를 Docker 빌드 컨텍스트로 사용합니다. Render에서는 Docker 웹 서비스의 Root Directory를 `backend`로, Health Check Path를 `/api/health`로 지정합니다. 이미지는 `cloud` 프로필로 시작하고 호스팅 제공자가 지정한 `PORT`를 사용합니다.
+
+| 환경 변수 | 배포 서버에 넣을 값 |
+| --- | --- |
+| `V2V_DB_URL` | PostgreSQL JDBC URL. Supabase의 IPv4 Session pooler를 쓰면 `jdbc:postgresql://실제-풀러-호스트:5432/postgres?sslmode=require` 형식 |
+| `V2V_DB_USER` | DB 연결 화면에 표시된 사용자 이름. Supabase Session pooler 이름은 일반적으로 `postgres.<프로젝트-ref>` |
+| `V2V_DB_PASSWORD` | DB 비밀번호 |
+| `V2V_CORS_ORIGINS` | 실제 프론트 배포 주소. 여러 출처는 쉼표로 구분 |
+| 위 표의 외부 API 키와 V2V 연동 토큰 | 필요한 공개 데이터 API 키, AI 워커 토큰과 운영자 토큰을 배포 서비스의 환경 변수로 입력 |
+
+최초 시작 시 Flyway가 PostgreSQL의 전용 `v2v` 스키마에 테이블을 생성합니다. Supabase에서는 `v2v` 스키마를 Data API 공개 목록에 추가하지 않습니다. 기존 H2 데이터를 옮기는 작업은 별도입니다. 배포된 서버의 `/api/health`가 `UP`이면 같은 주소의 `/swagger-ui.html`을 팀에 공유하고 프론트와 AI 워커에 서버의 기본 URL을 설정합니다.
+
 ## 프론트 API
 
 서버를 실행한 뒤 `http://127.0.0.1:8080/swagger-ui.html`에서 각 API 이름과 설명을 펼쳐 보고 **Try it out**으로 요청을 보낼 수 있습니다. `127.0.0.1`은 브라우저가 열린 PC 자신을 가리킵니다. 같은 서버와 데이터를 사용할 팀원에게는 백엔드를 배포한 주소에 `/swagger-ui.html`을 붙여 공유합니다. OpenAPI JSON은 같은 서버의 `/v3/api-docs`에서 받을 수 있습니다.
