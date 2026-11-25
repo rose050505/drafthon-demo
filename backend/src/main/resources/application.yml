@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: v2v-backend
+  datasource:
+    url: ${V2V_DB_URL:jdbc:h2:file:./data/v2v;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE}
+    username: ${V2V_DB_USER:sa}
+    password: ${V2V_DB_PASSWORD:}
+  servlet:
+    multipart:
+      max-file-size: 8MB
+      max-request-size: 9MB
+  mvc:
+    problemdetails:
+      enabled: true
+server:
+  address: ${V2V_BIND_ADDRESS:127.0.0.1}
+  port: ${PORT:8080}
+  error:
+    include-message: never
+v2v:
+  cors-origins: ${V2V_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173}
+  nts-key: ${V2V_NTS_API_KEY:}
+  semas-key: ${V2V_SEMAS_API_KEY:}
+  building-key: ${V2V_BUILDING_HUB_API_KEY:}
+  kakao-key: ${V2V_KAKAO_REST_KEY:}
+  sgis-service-id: ${V2V_SGIS_SERVICE_ID:}
+  sgis-secret-key: ${V2V_SGIS_SECRET_KEY:}
+  catalog-token: ${V2V_CATALOG_ADMIN_TOKEN:}
+  ai-token: ${V2V_AI_WORKER_TOKEN:}
