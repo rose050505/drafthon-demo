@@ -138,8 +138,20 @@ Invoke-RestMethod -Method Put -Uri 'http://127.0.0.1:8080/api/integrations/catal
 
 ## AI 워커 연결
 
+### 동성로 창업 위험 분석
+
+Docker 배포는 Python 분석기를 함께 실행합니다. 창업 아이템과 위치가 있는 계획에 `POST /api/startup-plans/{id}/analysis`를 호출하면 내장 워커가 `STARTUP_RISK`를 가져와 분석합니다. 선택 공실의 비용까지 보려면 요청에 `vacancyId`를 넣으세요. 프론트와 기존 외부 워커는 같은 API를 계속 사용합니다. 분석 결과는 본인 토큰으로 `GET /api/ai-jobs/{id}`에서 확인할 수 있습니다.
+
+결과의 `summary`에는 위험 등급과 주된 근거가, `findings`에는 점검 항목과 준비 조치가, `studentProjects`에는 추천 전공과 과제 결과물이 들어갑니다. `candidates[0]`에서 반경 300m 업종 집계와 개별 비용·공간 항목을 확인할 수 있습니다. 후보지는 공개 상가 좌표가 형성하는 동성로1·2·3가의 대략적인 범위 안에서 분석합니다. 업종을 하나로 식별할 수 없으면 업종별 비교를 보류합니다. 관리비나 월 예산이 없으면 월 고정비를 확인 대상으로 표시합니다. 개업 후 180일 폐업 확률은 연구용 모델의 검증 범위가 부족해 보류합니다.
+
+내장 워커에는 별도 API 키가 필요 없습니다. Docker 밖에서 백엔드 폴더를 기준으로 실행하려면 `V2V_STARTUP_RISK_ENABLED=true`를 지정합니다. Windows에서는 `V2V_STARTUP_RISK_PYTHON=python`을 함께 지정할 수 있습니다. 테스트는 Python 3.10 이상이 있는 환경에서 `./gradlew test --tests '*StartupRiskWorkerTest'`로 실행합니다.
+
+상가와 도시철도 하차 분석에는 배포에 포함한 동성로 공개 데이터 가공본을 사용합니다. 인허가는 지방행정 인허가의 동성로 신규·폐업 집계입니다. 등록한 실제 가게의 영업 결과로 재학습하려면 창업 계획과 개업·영업 유지·폐업을 연결한 이력이 필요합니다. [소진공 상가정보](https://www.data.go.kr/data/15083033/fileData.do) · [대구교통공사 승하차](https://www.data.go.kr/data/15002503/fileData.do) · [일반음식점 인허가](https://www.data.go.kr/data/15154916/openapi.do) · [휴게음식점 인허가](https://www.data.go.kr/data/15154921/openapi.do)
+
+### 외부 AI 워커
+
 1. 프론트에서 분석 요청을 보내면 서버는 `202`와 `id,kind,status`를 응답합니다. 로그인한 요청자는 `GET /api/ai-jobs/{id}`로 결과를 조회합니다.
-2. 워커가 `X-V2V-AI-Token`으로 `POST /api/integrations/ai/jobs/claim`을 호출합니다. 작업이 있으면 `id,kind,scopeId,input,leaseId,leaseExpiresAt`이 돌아옵니다. 큐가 비어 있으면 `204`입니다. 작업은 5분 안에 제출할 수 있고 이후에는 다른 워커가 다시 받을 수 있습니다.
+2. 워커가 `X-V2V-AI-Token`으로 `POST /api/integrations/ai/jobs/claim`을 호출합니다. 작업이 있으면 `id,kind,scopeId,input,leaseId,leaseExpiresAt`이 돌아옵니다. 할당할 작업이 없으면 `204`입니다. 작업은 5분 안에 제출할 수 있고 이후에는 다른 워커가 다시 받을 수 있습니다. 내장 위험 분석이 활성화된 환경에서는 `STARTUP_RISK`를 내장 워커가 담당합니다.
 3. 같은 헤더로 `PUT /api/integrations/ai/jobs/{id}/result`에 `leaseId,status,result`를 보냅니다. `status`는 `COMPLETED` 또는 `FAILED`이며 `result`는 JSON 객체입니다. `APPLICATION_QUESTIONS` 성공 응답의 필수 형식은 `{"questions":["질문 1","질문 2"]}`입니다.
 4. 입지 분석에서 `input.nearbyShopQuery` 또는 `input.vacancies[].nearbyShopQuery`를 `GET /api/catalog/shops` 파라미터로 넘겨 주변 상가를 조회합니다. 공실 후보는 최근 확인순 100개까지 포함합니다. 입지와 업종 결론에는 실제 데이터 출처와 조회 시점, 자료가 부족할 때 판단하기 어려운 항목을 표시하는 것이 좋습니다.
 5. 분석 위치가 정해졌으면 `input.areaStatistics`에 SGIS 행정동 통계를 담습니다. `censusYear`, `censusSummary`는 인구·가구·종사자와 기준연도입니다. `residentAgeProfile`은 거주자 연령대 집계이고 `industryBusinessCounts`는 반환된 최근 최대 3개 연도의 생활업종 사업체 수입니다. 상태는 `AVAILABLE`, `PARTIAL`, `NOT_CONFIGURED`, `UNAVAILABLE`입니다. 입점 후보를 지정한 경우 `input.vacancy`에 호실·면적·월세·보증금이 포함됩니다.

@@ -1,0 +1,285 @@
+{
+  "format": "market-closure-logistic-v1",
+  "horizon_days": 180,
+  "radius_m": 300,
+  "metadata": {
+    "data_origin": "observed",
+    "outcome": "permit_closure",
+    "study_design": "dongseongro_food_permit_reconstruction",
+    "market_id": "dongseongro",
+    "area_definition": "대구광역시 중구 동성로1가·2가·3가 지번주소",
+    "sources": [
+      "식품_일반음식점_대구중구.csv",
+      "식품_휴게음식점_대구중구.csv"
+    ],
+    "outcomes_as_of": "2026-11-26",
+    "cohort_start": "2018-01-01",
+    "validation_start": "2024-01-01",
+    "training_count": 108,
+    "training_closures": 26,
+    "preparation": {
+      "일반음식점_source_rows": 9722,
+      "dongseongro_permits": 1145,
+      "missing_coordinates": 36,
+      "기타 휴게음식점_source_rows": 4988,
+      "cohort_not_mature": 49
+    },
+    "split_exclusions": {
+      "property_in_validation": 73,
+      "outcome_not_known_at_split": 7
+    }
+  },
+  "columns": {
+    "competition_count": {
+      "fill": 3.7609296261008147,
+      "mean": 3.747268357442082,
+      "scale": 0.37845033519186777
+    },
+    "competition_share": {
+      "fill": 0.2697505197505198,
+      "mean": 0.35726119192112377,
+      "scale": 0.1361396357839694
+    },
+    "market_size": {
+      "fill": 4.77912349311153,
+      "mean": 4.832196574081303,
+      "scale": 0.2528597144728175
+    },
+    "recent_openings": {
+      "fill": 2.995732273553991,
+      "mean": 3.0224610572424466,
+      "scale": 0.521032678437341
+    },
+    "recent_closures": {
+      "fill": 3.0677824455408693,
+      "mean": 3.0099346406295386,
+      "scale": 0.38624249577507774
+    },
+    "recent_same_industry_closures": {
+      "fill": 2.0794415416798357,
+      "mean": 1.952608583288525,
+      "scale": 0.39650280935065674
+    }
+  },
+  "industries": [
+    "기타 휴게음식점",
+    "일반음식점",
+    "카페"
+  ],
+  "intercept": -1.3043797045037715,
+  "weights": [
+    0.10613647177645776,
+    0.0,
+    -0.5563290656331668,
+    0.0,
+    -0.004550984578301105,
+    0.0,
+    0.31370640548195694,
+    0.0,
+    -0.5364759372781815,
+    0.0,
+    -0.09078716661354605,
+    0.0,
+    0.45808786683774133,
+    0.267583440383678,
+    -0.725708327876008
+  ],
+  "validation": {
+    "count": 190,
+    "closures": 144,
+    "brier": 0.355751711302502,
+    "baseline_brier": 0.4014616721301523,
+    "mean_predicted": 0.3024795994850441
+  },
+  "scopes": [
+    {
+      "market_id": "dongseongro",
+      "industry": "기타 휴게음식점",
+      "eligible": false,
+      "training_count": 32,
+      "validation": {
+        "count": 56,
+        "closures": 52,
+        "brier": 0.20430679887605824,
+        "baseline_brier": 0.3038803756796836,
+        "mean_predicted": 0.542223150564877
+      },
+      "coverage": {},
+      "passes_baseline_and_sample_checks": false
+    },
+    {
+      "market_id": "dongseongro",
+      "industry": "일반음식점",
+      "eligible": false,
+      "training_count": 46,
+      "validation": {
+        "count": 126,
+        "closures": 92,
+        "brier": 0.44318280729391724,
+        "baseline_brier": 0.46932870370370366,
+        "mean_predicted": 0.20336581376204016
+      },
+      "coverage": {
+        "111111": 126
+      },
+      "passes_baseline_and_sample_checks": true
+    },
+    {
+      "market_id": "dongseongro",
+      "industry": "카페",
+      "eligible": false,
+      "training_count": 30,
+      "validation": {
+        "count": 8,
+        "closures": 0,
+        "brier": 0.0388263364228181,
+        "baseline_brier": 0.015625,
+        "mean_predicted": 0.18531686706352596
+      },
+      "coverage": {},
+      "passes_baseline_and_sample_checks": false
+    }
+  ],
+  "public_context": {
+    "market_files": [
+      {
+        "file": "소상공인시장진흥공단_상가(상권)정보_20260930.zip",
+        "observed_on": "2026-09-30",
+        "published_on": "2026-10-30",
+        "shops": 768,
+        "plots": 259,
+        "industry_counts": {
+          "소매": 393,
+          "음식": 174,
+          "수리·개인": 46,
+          "교육": 38,
+          "과학·기술": 32,
+          "예술·스포츠": 32,
+          "보건의료": 31,
+          "시설관리·임대": 11,
+          "부동산": 8,
+          "숙박": 3
+        }
+      }
+    ],
+    "transit_files": {
+      "대구교통공사_역별일별시간별승하차인원현황_20261031.csv": [
+        "2026-01",
+        "2026-02",
+        "2026-03",
+        "2026-04",
+        "2026-05",
+        "2026-06",
+        "2026-07",
+        "2026-08",
+        "2026-09",
+        "2026-10"
+      ]
+    },
+    "latest_market": {
+      "file": "소상공인시장진흥공단_상가(상권)정보_20260930.zip",
+      "observed_on": "2026-09-30",
+      "published_on": "2026-10-30",
+      "shops": 768,
+      "plots": 259,
+      "industry_counts": {
+        "소매": 393,
+        "음식": 174,
+        "수리·개인": 46,
+        "교육": 38,
+        "과학·기술": 32,
+        "예술·스포츠": 32,
+        "보건의료": 31,
+        "시설관리·임대": 11,
+        "부동산": 8,
+        "숙박": 3
+      }
+    },
+    "latest_transit": {
+      "file": "대구교통공사_역별일별시간별승하차인원현황_20261031.csv",
+      "observed_month": "2026-10",
+      "published_on": "2026-11-18",
+      "mean_daily_alightings": {
+        "반월당1": 12867.2,
+        "반월당2": 20462.7,
+        "중앙로": 15047.5
+      },
+      "weekend_to_weekday_ratio": 1.074
+    },
+    "coverage": {
+      "market": {
+        "training_matches": 0,
+        "training_closures": 0,
+        "validation_matches": 0,
+        "validation_closures": 0,
+        "used": false
+      },
+      "transit": {
+        "training_matches": 0,
+        "training_closures": 0,
+        "validation_matches": 0,
+        "validation_closures": 0,
+        "used": false
+      }
+    },
+    "fit_status": "insufficient_historical_coverage",
+    "latest_opening_with_180_day_followup": "2026-05-30",
+    "permit_only_validation": {
+      "count": 190,
+      "closures": 144,
+      "brier": 0.355751711302502,
+      "baseline_brier": 0.4014616721301523,
+      "mean_predicted": 0.3024795994850441
+    }
+  },
+  "validation_diagnostics": {
+    "property_count": 37,
+    "properties_with_closures": 3,
+    "largest_property": {
+      "count": 144,
+      "closures": 142
+    },
+    "property_weighted_brier": 0.06035808417748693,
+    "property_weighted_baseline_brier": 0.07583718761473411,
+    "without_largest_property": {
+      "count": 46,
+      "closures": 2,
+      "brier": 0.044504392377262746,
+      "baseline_brier": 0.060125416854721433,
+      "mean_predicted": 0.17898330632209178
+    }
+  },
+  "agent_training": {
+    "strategy": "chronological_holdout",
+    "selection_metric": "property_weighted_brier",
+    "discovered_files": [
+      "식품_일반음식점_대구중구.csv",
+      "식품_휴게음식점_대구중구.csv"
+    ],
+    "public_file_audit": [
+      {
+        "file": "대구교통공사_역별일별시간별승하차인원현황_20261031.csv",
+        "source": "transit",
+        "published_on": "2026-11-18",
+        "status": "loaded"
+      },
+      {
+        "file": "소상공인시장진흥공단_상가(상권)정보_20260930.zip",
+        "source": "market",
+        "published_on": "2026-10-30",
+        "status": "loaded"
+      }
+    ],
+    "selection": {
+      "status": "insufficient_inner_sample",
+      "trials": [],
+      "selected": {
+        "sources": [],
+        "penalty": 0.02
+      }
+    },
+    "final_default_brier": 0.355751711302502,
+    "final_default_property_weighted_brier": 0.06035808417748693,
+    "deployment_status": "research_only"
+  }
+}

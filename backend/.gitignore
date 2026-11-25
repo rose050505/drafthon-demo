@@ -33,6 +33,7 @@ bin/
 .gradle/
 build/
 data/
+__pycache__/
 .env
 .env.*
 !.env.example
