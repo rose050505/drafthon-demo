@@ -88,7 +88,7 @@ class Startup {
             input.put("areaStatistics", sgis.forLocation((BigDecimal) location.get("longitude"),
                 (BigDecimal) location.get("latitude")));
         } else {
-            List<Map<String, Object>> candidates = catalog.vacancies(null, 100, 0);
+            List<Map<String, Object>> candidates = catalog.vacancies(null, 100, 0, false);
             candidates.forEach(candidate -> candidate.put("nearbyShopQuery", shopQuery(candidate)));
             input.put("vacancies", candidates);
             if (kind == JobKind.STARTUP_COMMUNITY) {

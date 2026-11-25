@@ -7,10 +7,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -27,11 +29,13 @@ import tools.jackson.databind.json.JsonMapper;
     "v2v.ai-token=workflow-local-test",
     "v2v.catalog-token=workflow-catalog-test",
     "v2v.nts-key=", "v2v.semas-key=", "v2v.building-key=", "v2v.kakao-key=",
-    "v2v.sgis-service-id=", "v2v.sgis-secret-key="
+    "v2v.sgis-service-id=", "v2v.sgis-secret-key=",
+    "v2v.operator-account-ids=00000000-0000-4000-8000-000000000001"
 })
 class WorkflowTest {
     @Autowired WebApplicationContext context;
     @Autowired JsonMapper json;
+    @Autowired JdbcTemplate db;
     MockMvc mvc;
 
     @BeforeEach
@@ -52,10 +56,30 @@ class WorkflowTest {
         var vacancy = Map.of("unitLabel", "101", "status", "AVAILABLE", "source", "Test database only",
             "verifiedAt", "2020-01-01T00:00:00Z");
         String vacancyId = field(tree(run(body(catalog(post("/api/integrations/catalog/buildings/{id}/vacancies", buildingId)), vacancy), 201)), "id");
-        assertEquals(1, tree(run(get("/api/vacancies"), 200)).size());
+        run(body(catalog(post("/api/integrations/catalog/buildings/{id}/vacancies", buildingId)),
+            Map.of("unitLabel", "102", "status", "UNVERIFIED", "source", "Test database only")), 201);
+        var listedVacancies = tree(run(get("/api/vacancies"), 200));
+        assertEquals(2, listedVacancies.size());
+        assertEquals("UNVERIFIED", field(listedVacancies.path(1), "status"));
+        var residentAccount = tree(run(body(post("/api/auth/signup"), Map.of(
+            "email", "resident@example.test", "username", "review-resident", "displayName", "resident",
+            "password", "integration-only-password")), 201));
+        String resident = field(tree(run(body(post("/api/auth/login"),
+            Map.of("username", "REVIEW-RESIDENT", "password", "integration-only-password")), 200)), "token");
+        assertEquals("review-resident", field(residentAccount.path("account"), "username"));
         run(body(post("/api/buildings/{id}/opinions", buildingId), Map.of("desiredBusiness", "공방", "reason", "체험 프로그램")), 401);
-        run(body(bearer(post("/api/buildings/{id}/opinions", buildingId), student),
-            Map.of("desiredBusiness", "공방", "reason", "체험 프로그램")), 201);
+        String opinion = field(tree(run(body(bearer(post("/api/buildings/{id}/opinions", buildingId), resident),
+            Map.of("desiredBusiness", "공방", "reason", "체험 프로그램", "category", "문화", "vacancyId", vacancyId)), 201)), "id");
+        String likePath = "/api/buildings/{id}/opinions/{opinionId}/like";
+        run(put(likePath, buildingId, opinion), 401);
+        run(bearer(put(likePath, buildingId, opinion), resident), 200);
+        assertEquals(1, tree(run(bearer(put(likePath, buildingId, opinion), resident), 200)).path("likeCount").asInt());
+        var liked = tree(run(bearer(get("/api/buildings/{id}/opinions", buildingId), resident), 200)).path(0);
+        assertEquals("문화", field(liked, "category"));
+        assertTrue(liked.path("likedByMe").asBoolean());
+        assertFalse(tree(run(get("/api/buildings/{id}/opinions", buildingId), 200)).path(0).path("likedByMe").asBoolean());
+        assertEquals(0, tree(run(bearer(delete(likePath, buildingId, opinion), resident), 200)).path("likeCount").asInt());
+        run(bearer(put(likePath, buildingId, opinion), resident), 200);
         run(catalog(post("/api/integrations/catalog/buildings/{id}/demand-analysis", buildingId)), 202);
         var demand = claim("BUILDING_DEMAND");
         finish(demand, Map.of("themes", List.of("공방")));
@@ -64,6 +88,7 @@ class WorkflowTest {
         String plan = field(tree(run(body(bearer(post("/api/startup-plans"), founder), Map.of()), 201)), "id");
         run(bearer(post("/api/startup-plans/{id}/analysis", plan), founder), 202);
         var analysis = claim("STARTUP_COMMUNITY");
+        assertEquals(1, analysis.path("input").path("vacancies").size());
         assertEquals(vacancyId, field(analysis.path("input").path("vacancies").get(0), "id"));
         assertTrue(analysis.path("input").path("vacancies").get(0).path("nearbyShopQuery").isObject());
         finish(analysis, Map.of("recommendations", List.of()));
@@ -83,7 +108,25 @@ class WorkflowTest {
         run(bearer(post("/api/postings/{id}/draft-generation", posting), founder), 202);
         finish(claim("POSTING_DRAFT"), Map.of("title", "상품 패키지 개선"));
         run(bearer(post("/api/postings/{id}/publish", posting), other), 403);
+        run(bearer(post("/api/postings/{id}/publish", posting), founder), 409);
+        run(bearer(post("/api/postings/{id}/review", posting), founder), 200);
+        String operations = operator();
+        run(bearer(get("/api/operations/posting-reviews"), founder), 403);
+        var pending = tree(run(bearer(get("/api/operations/posting-reviews"), operations), 200)).path(0);
+        assertEquals(posting, field(pending, "id"));
+        assertEquals(1, pending.path("opinionCount").asInt());
+        assertEquals(1, pending.path("likeCount").asInt());
+        var decision = put("/api/operations/postings/{id}/review", posting);
+        run(body(bearer(decision, operations),
+            Map.of("status", "NEXT_OPPORTUNITY", "readinessScore", 40, "taskFitScore", 80)), 200);
+        run(bearer(post("/api/postings/{id}/publish", posting), founder), 409);
+        run(bearer(post("/api/postings/{id}/review", posting), founder), 200);
+        var approved = tree(run(body(bearer(put("/api/operations/postings/{id}/review", posting), operations),
+            Map.of("status", "SELECTED", "readinessScore", 90, "taskFitScore", 95)), 200));
+        assertEquals(1, approved.path("reviewLikeCount").asInt());
         run(bearer(post("/api/postings/{id}/publish", posting), founder), 200);
+        run(body(bearer(put("/api/postings/{id}/advisor", posting), founder),
+            Map.of("advisorName", "지도교수")), 200);
         assertEquals(1, tree(run(get("/api/postings").param("interest", "디자인"), 200)).size());
         assertFalse(tree(run(get("/api/postings/{id}", posting), 200)).has("startupPlanId"));
 
@@ -109,6 +152,47 @@ class WorkflowTest {
         run(body(bearer(post("/api/matches/{id}/complete", match), founder), Map.of("handoverNotes", "작업 파일 인수인계 완료")), 200);
         assertEquals(1, tree(run(bearer(get("/api/students/me/career-cards"), student), 200)).size());
         run(bearer(get("/api/matches/{id}", match), other), 404);
+        for (int i = 0; i < 4; i++) {
+            String extra = register("extra" + i, Map.of("role", "STUDENT"));
+            run(body(bearer(put("/api/students/me"), extra),
+                Map.of("university", "Integration test", "interests", "디자인", "availability", "금요일")), 200);
+            UUID extraId = UUID.fromString(field(tree(run(bearer(get("/api/me"), extra), 200)), "id"));
+            UUID applicationId = UUID.randomUUID();
+            db.update("""
+                insert into applications(id, posting_id, student_id, answers_json, status) values (?, ?, ?, '[]', 'SUBMITTED')
+                """, applicationId, UUID.fromString(posting), extraId);
+            var selected = bearer(post("/api/postings/{id}/applications/{applicationId}/match", posting, applicationId), founder);
+            if (i < 3) assertEquals("지도교수", field(tree(run(selected, 201)), "advisorName"));
+            else run(selected, 409);
+            if (i == 2) {
+                var filled = tree(run(get("/api/postings/{id}", posting), 200));
+                assertEquals(4, filled.path("matchedStudentCount").asInt());
+                assertEquals("MATCHED", field(filled, "status"));
+            }
+        }
+    }
+
+    @Test
+    void accountCanSwitchRolesAndCannotSelfAssignOperator() throws Exception {
+        String account = register("multi", Map.of("role", "FOUNDER", "founderBudget", 900000));
+        run(body(bearer(put("/api/me/role"), account), Map.of("role", "OPERATOR")), 403);
+        var enrolled = tree(run(body(bearer(put("/api/me/role"), account), Map.of("role", "STUDENT")), 200));
+        assertEquals(2, enrolled.path("roles").size());
+        assertEquals("STUDENT", field(enrolled, "role"));
+        var switched = tree(run(body(bearer(put("/api/me/role"), account), Map.of("role", "FOUNDER")), 200));
+        assertEquals(900000, switched.path("founderBudget").asInt());
+        assertEquals("FOUNDER", field(switched, "role"));
+    }
+
+    private String operator() throws Exception {
+        String password = "integration-only-password";
+        String hash = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode(password);
+        db.update("insert into accounts(id, email, password_hash, display_name) values (?, ?, ?, ?)",
+            UUID.fromString("00000000-0000-4000-8000-000000000001"), "operator@example.test", hash, "operator");
+        String token = field(tree(run(body(post("/api/auth/login"),
+            Map.of("email", "operator@example.test", "password", password)), 200)), "token");
+        run(body(bearer(put("/api/me/role"), token), Map.of("role", "OPERATOR")), 200);
+        return token;
     }
 
     @Test
