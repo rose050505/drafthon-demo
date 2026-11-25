@@ -12,13 +12,21 @@ python -B analyze_direct.py sample_direct.json
 
 Render에 설정된 `STARTUP_RISK_API_TOKEN`은 실행 시 숨김 입력으로 받거나 현재 터미널의 환경 변수로 전달합니다. 필수 항목은 `businessIdea`, `latitude`, `longitude`입니다. 업종을 알고 있으면 `industry`를 쓰고, 금액은 정수 원 단위로 입력합니다. 확인하지 않은 비용은 생략할 수 있습니다. 관리비가 0원으로 확인됐다면 `monthlyManagementKrw`에 0을 입력합니다. 응답의 `summary`, `findings`, `studentProjects`에서 판정, 조치 및 학생 과제를 볼 수 있습니다.
 
-본인의 V2V 창업 계획을 가져오려면 `--plan-id`에 실제 ID를 넣고 `V2V_FOUNDER_TOKEN`에 본인 로그인 토큰을 입력합니다. 클라이언트는 기존 V2V의 창업 계획 조회 API에서 아이템과 선택 업종을 가져옵니다. JSON에는 후보지 좌표와 보유한 비용을 넣으세요. 로그인 토큰은 V2V 조회에 사용하고, AI 서버에는 분석에 필요한 입력만 보냅니다.
+### 실제 V2V 창업 계획 분석
+
+`sample_direct.json`을 별도 파일로 복사하고 후보지 위도·경도와 확인된 비용을 실제 값으로 바꿉니다. V2V 계획의 선택 업종을 사용하려면 복사한 파일의 `industry`를 생략합니다. 월세·관리비는 합산하고 월 예산과 비교합니다. 예산과 실제 비용은 원 단위 정수로 입력합니다.
 
 ```powershell
-python -B analyze_direct.py sample_direct.json --plan-id '<내 창업 계획 UUID>'
+python -B analyze_direct.py my_case.json --v2v-login --output analysis.json
 ```
 
-직접 분석 결과는 그 요청에 반환됩니다. 기존 V2V AI 작업 조회 화면에 결과를 저장하는 과정은 아래 V2V 워커 연동을 사용합니다.
+V2V 가입 이메일 또는 아이디와 비밀번호를 입력하면 운영 V2V에서 본인의 최근 계획을 조회합니다. 계획이 여러 개면 번호를 고르고, Render AI 서비스의 Environment에서 `STARTUP_RISK_API_TOKEN` 값을 확인해 숨김 입력에 넣습니다. V2V 로그인 정보는 V2V 서버에 보내고, AI 서비스에는 창업 분석 입력을 보냅니다. 호출 주소는 [운영 V2V Swagger](https://v2v-drafthon-backend.onrender.com/swagger-ui/index.html)와 [Render AI 서비스](https://dashboard.render.com/web/srv-dc3iurnlk1mc73f3dl5g)에서 확인할 수 있습니다.
+
+`--output`을 지정하면 선택한 경로에 결과 JSON을 새로 만듭니다. 같은 이름의 파일이 있으면 새 파일명을 사용합니다. 옵션을 생략하면 JSON을 터미널에 출력합니다. 결과의 `planId`, `summary`, `findings`, `studentProjects`에서 계획, 판정, 준비 사항 및 과제를 확인합니다.
+
+별도 옵션 `--set-founder`는 본인 V2V 계정의 활성 역할을 예비 창업자로 설정합니다. `--create-test-plan`은 본인 계획 목록이 비어 있을 때만 테스트용 창업 계획을 한 건 등록합니다. 두 옵션 모두 `--v2v-login`과 함께 사용합니다.
+
+이미 계획 ID와 로그인 토큰을 알고 있으면 `--plan-id`와 `V2V_FOUNDER_TOKEN`으로 해당 계획을 직접 가져올 수 있습니다. 직접 분석의 결과는 API 응답과 선택한 출력 파일에서 확인합니다. 기존 V2V 작업 결과 저장은 아래 워커 연동 경로를 사용합니다.
 
 ## 실행
 

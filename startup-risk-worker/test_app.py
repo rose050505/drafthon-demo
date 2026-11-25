@@ -3,10 +3,11 @@ from datetime import date
 from io import BytesIO
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from analyze_direct import include_plan
+from analyze_direct import DEFAULT_V2V_URL, choose_v2v_plan, include_plan, main
 from app import create_app
 from startup_analysis import DEFAULT_PUBLIC_DATA, load_public_data
 from survival_model import load_model
@@ -98,6 +99,75 @@ class StartupRiskApiTest(unittest.TestCase):
         self.assertEqual(result["businessIdea"], "동성로 커피 포장")
         self.assertEqual(result["industry"], "카페")
         self.assertEqual(result["latitude"], 35.869)
+
+    @patch("analyze_direct.request_json")
+    @patch("analyze_direct.getpass.getpass", return_value="fixture-password")
+    @patch("builtins.input", side_effect=["founder@example.test", "2"])
+    @patch("builtins.print")
+    def test_cli_logs_in_and_selects_a_plan_without_a_swagger_token(self, print_line, read_line, read_password, request):
+        request.side_effect = [
+            {"token": "fixture-token"},
+            [{"id": str(LEASE_ID), "businessIdea": "다른 계획"}, {"id": PLAN_ID, "businessIdea": "동성로 카페"}],
+        ]
+        self.assertEqual(choose_v2v_plan(), (PLAN_ID, "fixture-token"))
+        self.assertEqual(request.call_args_list[0].args, (
+            f"{DEFAULT_V2V_URL}/api/auth/login", None, "V2V 로그인",
+            {"email": "founder@example.test", "password": "fixture-password"},
+        ))
+        self.assertEqual(request.call_args_list[1].args, (
+            f"{DEFAULT_V2V_URL}/api/startup-plans", "fixture-token", "V2V 창업 계획 목록",
+        ))
+        self.assertIs(request.call_args_list[1].kwargs["expected_type"], list)
+
+    @patch("analyze_direct.request_json")
+    @patch("analyze_direct.getpass.getpass", return_value="fixture-password")
+    @patch("builtins.input", side_effect=["fixture-founder", "25000000"])
+    @patch("builtins.print")
+    def test_cli_can_set_founder_role_before_reading_plans(self, print_line, read_line, read_password, request):
+        request.side_effect = [
+            {"token": "fixture-token", "account": {"role": "OWNER", "founderBudget": None}},
+            {"role": "FOUNDER"},
+            [{"id": PLAN_ID, "businessIdea": "동성로 카페"}],
+        ]
+        self.assertEqual(choose_v2v_plan(set_founder=True), (PLAN_ID, "fixture-token"))
+        self.assertEqual(request.call_args_list[1].args, (
+            f"{DEFAULT_V2V_URL}/api/me/role", "fixture-token", "V2V 예비 창업자 설정",
+            {"role": "FOUNDER", "founderBudget": 25_000_000},
+        ))
+        self.assertEqual(request.call_args_list[1].kwargs["method"], "PUT")
+        self.assertEqual(request.call_args_list[2].args[0], f"{DEFAULT_V2V_URL}/api/startup-plans")
+
+    @patch("analyze_direct.request_json")
+    @patch("analyze_direct.getpass.getpass", return_value="fixture-password")
+    @patch("builtins.input", return_value="fixture-founder")
+    @patch("builtins.print")
+    def test_cli_creates_a_test_plan_only_when_the_list_is_empty(self, print_line, read_line, read_password, request):
+        test_idea = "[연동 테스트] 동성로 카페"
+        session = {"token": "fixture-token", "account": {"role": "FOUNDER"}}
+        plan = {"id": PLAN_ID, "businessIdea": test_idea}
+        request.side_effect = [session, [], plan]
+        self.assertEqual(choose_v2v_plan(test_idea=test_idea), (PLAN_ID, "fixture-token"))
+        self.assertEqual(request.call_args_list[2].args, (
+            f"{DEFAULT_V2V_URL}/api/startup-plans", "fixture-token", "V2V 테스트 계획 등록", {"businessIdea": test_idea},
+        ))
+        request.reset_mock()
+        request.side_effect = [session, [plan]]
+        self.assertEqual(choose_v2v_plan(test_idea=test_idea), (PLAN_ID, "fixture-token"))
+        self.assertEqual(request.call_count, 2)
+
+    @patch("builtins.print")
+    @patch("analyze_direct.secret", return_value="fixture-token")
+    @patch("analyze_direct.request_json")
+    def test_cli_saves_only_report_json_without_overwriting(self, request, get_secret, print_line):
+        with TemporaryDirectory() as directory:
+            result = Path(directory) / "report.json"
+            args = ["analyze_direct.py", str(Path(__file__).with_name("sample_direct.json")), "--output", str(result)]
+            first_report = {"summary": "위험 높음", "planId": PLAN_ID}
+            request.side_effect = [first_report, {"summary": "보완 필요"}]
+            with patch("sys.argv", args):
+                self.assertEqual(main(), 0)
+                self.assertEqual(main(), 1)
+            self.assertEqual(json.loads(result.read_text(encoding="utf-8")), first_report)
 
 
 if __name__ == "__main__":
