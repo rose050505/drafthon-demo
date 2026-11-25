@@ -19,7 +19,7 @@ class SgisDataTest {
     private final JsonMapper json = JsonMapper.builder().build();
     private final PublicData http = mock(PublicData.class);
     private final SgisData sgis = new SgisData(http,
-        new V2vProperties(List.of(), "", "", "", "", "test-id", "test-key", "", "", List.of()));
+        new V2vProperties(List.of(), "", "", "", "", "test-id", "test-key", "", "", List.of(), null));
     private final BigDecimal longitude = new BigDecimal("128.595");
     private final BigDecimal latitude = new BigDecimal("35.867");
 

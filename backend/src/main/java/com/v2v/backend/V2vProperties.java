@@ -15,5 +15,6 @@ record V2vProperties(
     String sgisSecretKey,
     String catalogToken,
     String aiToken,
-    List<UUID> operatorAccountIds
+    List<UUID> operatorAccountIds,
+    UUID demoOwnerAccountId
 ) {}

@@ -142,11 +142,12 @@ class Accounts {
         if (!token.matches("[A-Za-z0-9_-]{43}")) return null;
         String hash = digest(token);
         return db.query("""
-            select a.id, a.active_role as role from access_tokens t join accounts a on a.id = t.account_id
+            select a.id, a.active_role as role, a.business_status_checked_at is not null and a.business_number is not null as business_verified
+            from access_tokens t join accounts a on a.id = t.account_id
             where t.token_hash = ? and t.expires_at > current_timestamp
             """, (rs, row) -> {
                 UUID id = rs.getObject("id", UUID.class);
-                String role = activeRole(id, rs.getString("role"));
+                String role = activeRole(id, rs.getString("role"), rs.getBoolean("business_verified"));
                 return new Actor(id, role == null ? null : Role.valueOf(role), hash);
             }, hash)
             .stream().findFirst().orElse(null);
@@ -161,9 +162,14 @@ class Accounts {
         var roles = new ArrayList<>(db.queryForList("""
             select role from account_roles where account_id = ? and role <> 'OPERATOR' order by role
             """, String.class, id));
+        boolean verifiedBusiness = verifiedBusiness(profile);
+        boolean demoOwner = isDemoOwner(id) && !verifiedBusiness;
+        if (!verifiedBusiness) roles.remove("OWNER");
+        if (demoOwner) roles.add("OWNER");
         if (isOperator(id)) roles.add("OPERATOR");
         profile.put("roles", roles);
-        profile.put("role", activeRole(id, (String) profile.get("role")));
+        profile.put("role", activeRole(id, (String) profile.get("role"), verifiedBusiness));
+        profile.put("demoOwner", demoOwner);
         return profile;
     }
 
@@ -174,13 +180,13 @@ class Accounts {
         if (data.role() == Role.FOUNDER && data.founderBudget() == null && profile.get("founderBudget") == null) {
             throw invalid("예비 창업자 역할의 창업 예산을 입력하세요.");
         }
-        if (data.role() == Role.OWNER && businessNumber == null && profile.get("businessStatusCheckedAt") == null) {
+        boolean verifiedBusiness = verifiedBusiness(profile) || businessNumber != null;
+        if (data.role() == Role.OWNER && !verifiedBusiness && !isDemoOwner(actor.id())) {
             throw invalid("기존 사업자 역할의 사업자등록번호를 입력하세요.");
         }
-        List<?> roles = (List<?>) profile.get("roles");
-        if (!roles.contains(data.role().name())) {
-            if (data.role() == Role.OPERATOR) throw error(FORBIDDEN, "운영단 역할은 관리자가 부여합니다.");
-            db.update("insert into account_roles(account_id, role) values (?, ?)", actor.id(), data.role().name());
+        if (data.role() == Role.OPERATOR && !isOperator(actor.id())) throw error(FORBIDDEN, "운영단 역할은 관리자가 부여합니다.");
+        if (data.role() != Role.OPERATOR && (data.role() != Role.OWNER || verifiedBusiness)) {
+            db.update("insert into account_roles(account_id, role) values (?, ?) on conflict do nothing", actor.id(), data.role().name());
         }
         db.update("""
             update accounts set active_role = ?, founder_budget = coalesce(?, founder_budget),
@@ -189,8 +195,19 @@ class Accounts {
             """, data.role().name(), data.founderBudget(), businessNumber, businessNumber == null ? null : now(), actor.id());
     }
 
-    private String activeRole(UUID id, String role) {
-        return "OPERATOR".equals(role) && !isOperator(id) ? null : role;
+    private String activeRole(UUID id, String role, boolean verifiedBusiness) {
+        if ("OPERATOR".equals(role) && !isOperator(id)) return null;
+        if ("OWNER".equals(role) && !verifiedBusiness && !isDemoOwner(id)) return null;
+        if (role == null && !verifiedBusiness && isDemoOwner(id)) return "OWNER";
+        return role;
+    }
+
+    private static boolean verifiedBusiness(Map<String, Object> profile) {
+        return profile.get("businessNumber") != null && profile.get("businessStatusCheckedAt") != null;
+    }
+
+    private boolean isDemoOwner(UUID id) {
+        return id.equals(config.demoOwnerAccountId());
     }
 
     private boolean isOperator(UUID id) {
@@ -280,7 +297,8 @@ class AuthController {
 
     @PutMapping("/me/role")
     @Operation(summary = "역할 추가 또는 활성 역할 전환",
-        description = "처음 `FOUNDER`를 추가할 때 예산, `OWNER`를 추가할 때 사업자등록번호를 입력합니다. 가진 역할은 역할명만 보내 전환합니다. 응답의 `roles`는 보유 역할, `role`은 활성 역할입니다.")
+        description = "처음 FOUNDER를 추가할 때 예산, 일반 OWNER를 추가할 때 사업자등록번호를 입력합니다. "
+            + "지정된 시연 계정은 역할명만 보낼 수 있습니다. roles는 보유 역할, role은 활성 역할입니다.")
     Map<String, Object> role(@AuthenticationPrincipal Actor actor, @Valid @RequestBody Onboarding input) {
         if (input.role() != Role.FOUNDER && input.founderBudget() != null) {
             throw invalid("예비 창업자 역할에 한해 창업 예산을 입력하세요.");

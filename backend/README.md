@@ -48,6 +48,7 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 | `V2V_CORS_ORIGINS` | `https://parkmiyeong.com`. 여러 출처는 쉼표로 구분 |
 | `V2V_BIND_ADDRESS` | `0.0.0.0` (cloud 프로필 기본값) |
 | `V2V_OPERATOR_ACCOUNT_IDS` | 공고 심사 권한을 부여할 가입 계정 UUID. 여러 계정은 쉼표로 구분 |
+| `V2V_DEMO_OWNER_ACCOUNT_ID` | 선택. 사업자등록 확인 없이 가게 기능을 시연할 가입 계정 UUID 한 개. 비우면 시연 권한이 해제됩니다 |
 | 위 표의 외부 API 키와 V2V 연동 토큰 | 필요한 공개 데이터 API 키, AI 워커 토큰과 운영자 토큰을 배포 서비스의 환경 변수로 입력 |
 
 최초 시작 시 Flyway가 PostgreSQL의 전용 `v2v` 스키마에 테이블을 생성합니다. Supabase에서는 `v2v` 스키마를 Data API 공개 목록에 추가하지 않습니다. 기존 H2 데이터를 옮기는 작업은 별도입니다. 배포된 서버의 `/api/health`가 `UP`이면 같은 주소의 `/swagger-ui.html`을 팀에 공유하고 프론트와 AI 워커에 서버의 기본 URL을 설정합니다.
@@ -88,6 +89,8 @@ $env:V2V_CATALOG_ADMIN_TOKEN = '<공실 등록 담당자 토큰>'
 | 프로젝트와 경력 카드 | `GET /api/me/matches`, `GET /api/matches/{id}`, `POST /api/matches/{id}/start`, `POST /api/matches/{id}/complete`, `GET /api/students/me/career-cards` | 완료 입력은 `handoverNotes`와 선택 `handoverUrl`(HTTPS). 학생 경력 카드는 완료 건만 반환 |
 
 사업자 상태 조회는 계속사업자 상태를 확인합니다. 계정 본인과 사업자 대표자의 일치 확인이 필요한 경우 국세청 진위확인에 필요한 정보를 추가로 받아야 합니다. 지도교수와 연계 교과는 현재 직접 입력입니다. 대학의 공식 배정, 학점 승인, 외부 알림은 별도 연동 대상입니다.
+
+시연을 하려면 시연용 계정을 일반 회원가입으로 만들고, 응답의 `account.id`를 `V2V_DEMO_OWNER_ACCOUNT_ID`에 설정합니다. 이 계정은 따로 선택한 역할이 없다면 로그인 시 `role: OWNER`가 되며, 다른 역할에서 `PUT /api/me/role`에 `{"role":"OWNER"}`만 보내 전환할 수 있습니다. 계정 응답에서 `demoOwner`가 `true`일 때도 `businessNumber`와 `businessStatusCheckedAt`에는 실제 확인 정보만 들어갑니다. 서버에서 UUID 설정을 제거하면 시연 계정으로 기존에 발급한 토큰에도 일반 사업자 확인 조건이 다시 적용됩니다.
 
 ## 가게·주민 요청·판매 기록
 
