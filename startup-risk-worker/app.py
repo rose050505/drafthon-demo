@@ -1,4 +1,4 @@
-"""Expose the Dongseongro analyzer to an AI worker after it has claimed a V2V job."""
+"""Serve direct Dongseongro analysis and accept already claimed V2V jobs."""
 
 from datetime import datetime, timedelta, timezone
 from hmac import compare_digest
@@ -11,10 +11,11 @@ from wsgiref.simple_server import make_server
 from compare_market import read_object
 from startup_analysis import DEFAULT_PUBLIC_DATA, load_public_data
 from survival_model import load_model
-from v2v_startup_risk import DEFAULT_MODEL, analyze_job
+from v2v_startup_risk import DEFAULT_MODEL, analyze_direct, analyze_job
 
 
 ROUTE = "/api/startup-risk"
+DIRECT_ROUTE = "/api/startup-risk/direct"
 MAX_REQUEST_BYTES = 1_048_576
 MAX_RESULT_CHARACTERS = 120_000
 
@@ -61,7 +62,7 @@ def create_app(token, public_data, model, clock=today_in_seoul):
         path, method = environ.get("PATH_INFO"), environ.get("REQUEST_METHOD")
         if path == "/health" and method == "GET":
             return response(start_response, HTTPStatus.OK, {"status": "UP"})
-        if path != ROUTE:
+        if path not in (ROUTE, DIRECT_ROUTE):
             return response(start_response, HTTPStatus.NOT_FOUND, {"error": "알 수 없는 경로입니다."})
         if method != "POST":
             return response(start_response, HTTPStatus.METHOD_NOT_ALLOWED, {"error": "POST를 사용하세요."})
@@ -82,15 +83,16 @@ def create_app(token, public_data, model, clock=today_in_seoul):
             body = environ["wsgi.input"].read(size) if size > 0 else b""
             if len(body) != size:
                 raise ValueError("incomplete body")
-            job = json.loads(body.decode("utf-8"))
+            payload = json.loads(body.decode("utf-8"))
         except (ValueError, RecursionError):
             return response(start_response, HTTPStatus.BAD_REQUEST, {"error": "UTF-8 JSON을 확인하세요."})
+        analyzer = analyze_direct if path == DIRECT_ROUTE else build_submission
         try:
-            submission = build_submission(job, public_data=public_data, model=model, as_of=clock())
-        except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
-            return response(start_response, HTTPStatus.UNPROCESSABLE_ENTITY,
-                            {"error": "작업 유형, ID와 창업 입력을 확인하세요."})
-        return response(start_response, HTTPStatus.OK, submission)
+            result = analyzer(payload, public_data=public_data, model=model, as_of=clock())
+        except (KeyError, TypeError, ValueError, OverflowError, RecursionError) as error:
+            detail = str(error) if path == DIRECT_ROUTE and isinstance(error, ValueError) else "창업 입력을 확인하세요."
+            return response(start_response, HTTPStatus.UNPROCESSABLE_ENTITY, {"error": detail})
+        return response(start_response, HTTPStatus.OK, result)
 
     return handle
 
